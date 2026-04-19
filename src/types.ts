@@ -32,6 +32,26 @@ export interface AudioFrame {
 
 export type SynthKind = 'sine' | 'square' | 'sawtooth' | 'triangle' | 'noise' | 'sweep' | 'drum';
 
+export type PatternCategory = 'ambient' | 'audio' | 'beat' | 'generative' | 'static';
+
+export interface GridIndex {
+  stripCount: number;
+  stripOf: Uint16Array;
+  indexInStrip: Uint16Array;
+  ledsPerStrip: Uint16Array;
+  stripStart: Uint32Array;
+  stripNeighbors: Uint16Array;
+  neighborsOf(i: number): number[];
+}
+
+export interface PatternCtx {
+  pixelCount: number;
+  grid: GridIndex;
+  state: Record<string, unknown>;
+  prevColors: Float32Array;
+  dt: number;
+}
+
 export type PatternFn = (
   index: number,
   x: number,
@@ -40,6 +60,7 @@ export type PatternFn = (
   t: number,
   audio: AudioFrame,
   out: [number, number, number],
+  ctx?: PatternCtx,
 ) => void;
 
 export interface LayoutConfig {

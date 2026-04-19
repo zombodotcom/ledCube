@@ -1,4 +1,4 @@
-import type { LayoutConfig, PixelMap, StripDef } from './types';
+import type { GridIndex, LayoutConfig, PixelMap, StripDef } from './types';
 
 function mulberry32(seed: number): () => number {
   let s = seed >>> 0;
@@ -73,6 +73,70 @@ export function buildPixelMap(strips: StripDef[]): PixelMap {
   }
 
   return { strips, count: total, positions, stripIndex, indexInStrip, totalMeters };
+}
+
+export function buildGridIndex(map: PixelMap): GridIndex {
+  const stripCount = map.strips.length;
+  const ledsPerStrip = new Uint16Array(stripCount);
+  const stripStart = new Uint32Array(stripCount);
+  let acc = 0;
+  for (let s = 0; s < stripCount; s++) {
+    const n = Math.floor(map.strips[s].length_m * map.strips[s].led_density);
+    ledsPerStrip[s] = n;
+    stripStart[s] = acc;
+    acc += n;
+  }
+
+  const stripNeighbors = new Uint16Array(stripCount * 4);
+  const NONE = 0xffff;
+  for (let s = 0; s < stripCount; s++) stripNeighbors[s * 4 + 0] = stripNeighbors[s * 4 + 1] = stripNeighbors[s * 4 + 2] = stripNeighbors[s * 4 + 3] = NONE;
+
+  for (let s = 0; s < stripCount; s++) {
+    const sx = map.strips[s].top[0];
+    const sy = map.strips[s].top[1];
+    let bestL = -1, bestR = -1, bestU = -1, bestD = -1;
+    let dL = Infinity, dR = Infinity, dU = Infinity, dD = Infinity;
+    for (let o = 0; o < stripCount; o++) {
+      if (o === s) continue;
+      const ox = map.strips[o].top[0];
+      const oy = map.strips[o].top[1];
+      const dx = ox - sx;
+      const dy = oy - sy;
+      const ax = Math.abs(dx);
+      const ay = Math.abs(dy);
+      if (ax >= ay) {
+        if (dx > 0 && dx < dR) { dR = dx; bestR = o; }
+        else if (dx < 0 && -dx < dL) { dL = -dx; bestL = o; }
+      } else {
+        if (dy > 0 && dy < dU) { dU = dy; bestU = o; }
+        else if (dy < 0 && -dy < dD) { dD = -dy; bestD = o; }
+      }
+    }
+    stripNeighbors[s * 4 + 0] = bestL >= 0 ? bestL : NONE;
+    stripNeighbors[s * 4 + 1] = bestR >= 0 ? bestR : NONE;
+    stripNeighbors[s * 4 + 2] = bestU >= 0 ? bestU : NONE;
+    stripNeighbors[s * 4 + 3] = bestD >= 0 ? bestD : NONE;
+  }
+
+  const neighborsOut: number[] = [];
+  function neighborsOf(i: number): number[] {
+    neighborsOut.length = 0;
+    const s = map.stripIndex[i];
+    const ii = map.indexInStrip[i];
+    const n = ledsPerStrip[s];
+    if (ii > 0) neighborsOut.push(i - 1);
+    if (ii + 1 < n) neighborsOut.push(i + 1);
+    for (let k = 0; k < 4; k++) {
+      const ns = stripNeighbors[s * 4 + k];
+      if (ns === NONE) continue;
+      const nLen = ledsPerStrip[ns];
+      const nIdx = ii < nLen ? ii : nLen - 1;
+      neighborsOut.push(stripStart[ns] + nIdx);
+    }
+    return neighborsOut;
+  }
+
+  return { stripCount, stripOf: map.stripIndex, indexInStrip: map.indexInStrip, ledsPerStrip, stripStart, stripNeighbors, neighborsOf };
 }
 
 export function defaultLayout(): LayoutConfig {

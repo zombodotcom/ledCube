@@ -1,4 +1,4 @@
-import { defaultLayout, generateStrips, buildPixelMap } from './geometry';
+import { defaultLayout, generateStrips, buildPixelMap, buildGridIndex } from './geometry';
 import { createScene, uploadColors } from './scene';
 import { builtinPatterns, compilePattern } from './patterns/index';
 import { createAudioEngine } from './audio';
@@ -8,7 +8,7 @@ import {
   voltageToHeatmapColor,
   type ElectricalConfig,
 } from './electrical';
-import type { AudioFrame, LayoutConfig, PatternFn, PixelMap } from './types';
+import type { AudioFrame, GridIndex, LayoutConfig, PatternCtx, PatternFn, PixelMap } from './types';
 import { buildUI, updateStats } from './ui';
 import {
   downloadText,
@@ -30,14 +30,17 @@ const editorErr = document.getElementById('editor-err') as HTMLElement;
 
 let layout: LayoutConfig = defaultLayout();
 let map: PixelMap = buildPixelMap(generateStrips(layout));
+let grid: GridIndex = buildGridIndex(map);
+let prevColors = new Float32Array(map.count * 3);
 const scene = createScene(canvas, map);
 const audio = createAudioEngine();
 
-let activePatternKey = 'pulseTint';
+let activePatternKey = 'plasma';
 let activePattern: PatternFn = builtinPatterns[activePatternKey].fn;
 let activeSource = builtinPatterns[activePatternKey].source;
+let patternState: Record<string, unknown> = {};
 const scope = createScope(scopeRoot);
-let brightness = 0.5;
+let brightness = 0.25;
 let showElectrical = false;
 let electrical: ElectricalConfig = defaultElectrical();
 let lastElecT = 0;
@@ -54,6 +57,9 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
     try {
       const strips = generateStrips(layout);
       map = buildPixelMap(strips);
+      grid = buildGridIndex(map);
+      prevColors = new Float32Array(map.count * 3);
+      patternState = {};
       scene.rebuild(map);
       lastElecResult = simulate(map, scene.colors, electrical);
       refreshSummary();
@@ -66,6 +72,7 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
     activePatternKey = key;
     activePattern = builtinPatterns[key].fn;
     activeSource = builtinPatterns[key].source;
+    patternState = {};
   },
   onOpenEditor() {
     editorText.value = activeSource;
@@ -77,6 +84,12 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
   },
   onShowWires(show) {
     scene.setShowWires(show);
+  },
+  onGlow(on) {
+    scene.setGlow(on);
+  },
+  onGlowStrength(s) {
+    scene.setGlowStrength(s);
   },
   onBrightness(b) {
     brightness = b;
@@ -167,6 +180,7 @@ function applyEditor() {
     fn(0, 0, 0, 0, 0, dummyAudio, test);
     activePattern = fn;
     activeSource = editorText.value;
+    patternState = {};
     editorErr.textContent = '';
   } catch (e) {
     editorErr.textContent = (e as Error).message;
@@ -201,6 +215,14 @@ function render(nowMs: number) {
   const N = map.count;
   const pattern = activePattern;
   const br = brightness;
+  if (prevColors.length !== colors.length) prevColors = new Float32Array(colors.length);
+  const ctx: PatternCtx = {
+    pixelCount: N,
+    grid,
+    state: patternState,
+    prevColors,
+    dt,
+  };
 
   for (let i = 0; i < N; i++) {
     const x = pos[i * 3 + 0];
@@ -208,7 +230,7 @@ function render(nowMs: number) {
     const z = pos[i * 3 + 2];
     out[0] = 0; out[1] = 0; out[2] = 0;
     try {
-      pattern(i, x, y, z, t, frame, out);
+      pattern(i, x, y, z, t, frame, out, ctx);
     } catch {
       out[0] = 1; out[1] = 0; out[2] = 0;
     }
@@ -216,6 +238,7 @@ function render(nowMs: number) {
     colors[i * 3 + 1] = Math.max(0, Math.min(1, out[1] * br));
     colors[i * 3 + 2] = Math.max(0, Math.min(1, out[2] * br));
   }
+  prevColors.set(colors);
 
   if (showElectrical && t - lastElecT > 0.1) {
     lastElecResult = simulate(map, colors, electrical);
@@ -239,7 +262,7 @@ function render(nowMs: number) {
 
   uploadColors(scene);
   scene.controls.update();
-  scene.renderer.render(scene.scene, scene.camera);
+  scene.render();
 
   if (audio.isActive()) scope.draw(frame);
 

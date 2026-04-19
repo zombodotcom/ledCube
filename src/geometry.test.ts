@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPixelMap, defaultLayout, generateStrips } from './geometry';
+import { buildGridIndex, buildPixelMap, defaultLayout, generateStrips } from './geometry';
 import type { LayoutConfig } from './types';
 
 describe('geometry', () => {
@@ -110,5 +110,59 @@ describe('geometry', () => {
     expect(cfg.gridN).toBeGreaterThan(0);
     expect(cfg.density).toBeGreaterThan(0);
     expect(cfg.lengths_m.length).toBeGreaterThan(0);
+  });
+});
+
+describe('buildGridIndex', () => {
+  it('returns at least one neighbor for any pixel in a multi-strip map', () => {
+    const strips = generateStrips({
+      mode: 'uniform', gridN: 3, spacing_m: 0.3, lengths_m: [2], density: 30, seed: 0,
+    });
+    const map = buildPixelMap(strips);
+    const grid = buildGridIndex(map);
+    for (let i = 0; i < map.count; i++) {
+      const ns = grid.neighborsOf(i).slice();
+      expect(ns.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('same-strip neighbors are i±1', () => {
+    const strips = generateStrips({
+      mode: 'uniform', gridN: 2, spacing_m: 0.5, lengths_m: [1], density: 30, seed: 0,
+    });
+    const map = buildPixelMap(strips);
+    const grid = buildGridIndex(map);
+    // mid-strip pixel
+    const ns = grid.neighborsOf(5).slice();
+    expect(ns).toContain(4);
+    expect(ns).toContain(6);
+  });
+
+  it('cross-strip neighbors share approximately equal Z height', () => {
+    const strips = generateStrips({
+      mode: 'uniform', gridN: 2, spacing_m: 0.5, lengths_m: [2], density: 30, seed: 0,
+    });
+    const map = buildPixelMap(strips);
+    const grid = buildGridIndex(map);
+    const i = 30; // mid-strip pixel
+    const zi = map.positions[i * 3 + 2];
+    const ns = grid.neighborsOf(i).slice();
+    const otherStripNs = ns.filter((n) => map.stripIndex[n] !== map.stripIndex[i]);
+    expect(otherStripNs.length).toBeGreaterThan(0);
+    for (const n of otherStripNs) {
+      const zn = map.positions[n * 3 + 2];
+      expect(Math.abs(zn - zi)).toBeLessThan(0.1);
+    }
+  });
+
+  it('single-strip layout returns only same-strip neighbors', () => {
+    const strips = generateStrips({
+      mode: 'uniform', gridN: 1, spacing_m: 1, lengths_m: [1], density: 30, seed: 0,
+    });
+    const map = buildPixelMap(strips);
+    const grid = buildGridIndex(map);
+    expect(grid.stripCount).toBe(1);
+    const ns = grid.neighborsOf(0).slice();
+    expect(ns).toEqual([1]);
   });
 });

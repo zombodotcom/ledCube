@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import type { PixelMap } from './types';
 
 const VERT = /* glsl */ `
@@ -21,12 +24,11 @@ const FRAG = /* glsl */ `
   varying vec3 vColor;
   void main() {
     vec2 p = gl_PointCoord - vec2(0.5);
-    float r = dot(p, p);
-    if (r > 0.25) discard;
-    float falloff = 1.0 - smoothstep(0.0, 0.25, r);
-    vec3 c = vColor * (0.6 + 0.4 * falloff);
-    float alpha = falloff;
-    gl_FragColor = vec4(c, alpha);
+    float r2 = dot(p, p);
+    if (r2 > 0.25) discard;
+    float core = exp(-r2 * 18.0);
+    vec3 c = vColor * core;
+    gl_FragColor = vec4(c, core * 0.85);
   }
 `;
 
@@ -39,9 +41,15 @@ export interface SceneHandles {
   colors: Float32Array;
   material: THREE.ShaderMaterial;
   stripLines: THREE.LineSegments | null;
+  composer: EffectComposer;
+  bloomPass: UnrealBloomPass;
+  glowEnabled: boolean;
   rebuild(map: PixelMap): void;
   setShowWires(show: boolean): void;
   setPointSize(size: number): void;
+  setGlow(on: boolean): void;
+  setGlowStrength(s: number): void;
+  render(): void;
   resize(): void;
   dispose(): void;
 }
@@ -85,6 +93,18 @@ export function createScene(canvas: HTMLCanvasElement, map: PixelMap): SceneHand
   const points = new THREE.Points(geom, material);
   points.frustumCulled = false;
   scene.add(points);
+
+  const composer = new EffectComposer(renderer);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    0.9, // strength
+    0.6, // radius
+    0.0, // threshold (low = bloom on everything)
+  );
+  composer.addPass(bloomPass);
+  let glowEnabled = false;
 
   let stripLines: THREE.LineSegments | null = null;
   function buildWires(m: PixelMap) {
@@ -133,11 +153,26 @@ export function createScene(canvas: HTMLCanvasElement, map: PixelMap): SceneHand
     setPointSize(size: number) {
       material.uniforms.uSize.value = size;
     },
+    composer,
+    bloomPass,
+    glowEnabled,
+    setGlow(on: boolean) {
+      handles.glowEnabled = on;
+    },
+    setGlowStrength(s: number) {
+      bloomPass.strength = s;
+    },
+    render() {
+      if (handles.glowEnabled) composer.render();
+      else renderer.render(scene, camera);
+    },
     resize() {
       renderer.setSize(window.innerWidth, window.innerHeight, false);
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       material.uniforms.uPixelRatio.value = Math.min(window.devicePixelRatio, 2);
+      composer.setSize(window.innerWidth, window.innerHeight);
+      bloomPass.resolution.set(window.innerWidth, window.innerHeight);
     },
     dispose() {
       renderer.dispose();

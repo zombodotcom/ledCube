@@ -1,5 +1,5 @@
 import type { ElectricalConfig } from './electrical';
-import type { LayoutConfig, SynthKind } from './types';
+import type { LayoutConfig, PatternCategory, SynthKind } from './types';
 
 export interface UICallbacks {
   onLayoutChange(cfg: LayoutConfig): void;
@@ -7,6 +7,8 @@ export interface UICallbacks {
   onOpenEditor(): void;
   onPointSize(size: number): void;
   onShowWires(show: boolean): void;
+  onGlow(on: boolean): void;
+  onGlowStrength(s: number): void;
   onBrightness(b: number): void;
   onAudioFile(file: File): void;
   onAudioMic(): void;
@@ -41,7 +43,7 @@ export interface UIInitialState {
 export function buildUI(
   root: HTMLElement,
   layout: LayoutConfig,
-  patterns: Record<string, { name: string }>,
+  patterns: Record<string, { name: string; category: PatternCategory; description: string }>,
   activePatternKey: string,
   electrical: ElectricalConfig,
   initial: UIInitialState,
@@ -99,10 +101,16 @@ export function buildUI(
 
   root.appendChild(hr());
   root.appendChild(h2('Pattern'));
-  const patSel = selectEl(Object.keys(patterns), activePatternKey);
-  for (const opt of Array.from(patSel.options)) opt.textContent = patterns[opt.value].name;
+  const patSel = groupedPatternSelect(patterns, activePatternKey);
   root.appendChild(row('Pattern', patSel));
-  patSel.addEventListener('change', () => cb.onPatternChange(patSel.value));
+  const patDesc = document.createElement('div');
+  patDesc.style.cssText = 'font-size: 11px; color: var(--muted); margin: 4px 2px 6px; line-height: 1.35;';
+  patDesc.textContent = patterns[activePatternKey]?.description ?? '';
+  root.appendChild(patDesc);
+  patSel.addEventListener('change', () => {
+    patDesc.textContent = patterns[patSel.value]?.description ?? '';
+    cb.onPatternChange(patSel.value);
+  });
   const editBtn = button('Edit source…');
   root.appendChild(editBtn);
   editBtn.addEventListener('click', () => cb.onOpenEditor());
@@ -137,7 +145,7 @@ export function buildUI(
   root.appendChild(row('Scale', scale));
   scale.addEventListener('input', () => cb.onScale(+scale.value));
 
-  const brightness = rangeEl(0.5, 0, 1, 0.01);
+  const brightness = rangeEl(0.25, 0, 1, 0.01);
   root.appendChild(row('Brightness', brightness));
   brightness.addEventListener('input', () => cb.onBrightness(+brightness.value));
 
@@ -148,6 +156,13 @@ export function buildUI(
   const wires = checkEl(false);
   root.appendChild(row('Show strip wires', wires));
   wires.addEventListener('change', () => cb.onShowWires(wires.checked));
+
+  const glow = checkEl(false);
+  root.appendChild(row('Glow (bloom)', glow));
+  glow.addEventListener('change', () => cb.onGlow(glow.checked));
+  const glowStrength = rangeEl(0.9, 0, 2.5, 0.05);
+  root.appendChild(row('Glow strength', glowStrength));
+  glowStrength.addEventListener('input', () => cb.onGlowStrength(+glowStrength.value));
 
   root.appendChild(hr());
   root.appendChild(h2('Audio source'));
@@ -309,6 +324,41 @@ function selectEl(opts: string[], value: string) {
     opt.value = o;
     opt.textContent = o;
     s.appendChild(opt);
+  }
+  s.value = value;
+  return s;
+}
+const CATEGORY_LABEL: Record<PatternCategory, string> = {
+  ambient: 'Ambient',
+  generative: 'Generative',
+  audio: 'Audio-reactive',
+  beat: 'Beat-driven',
+  static: 'Static',
+};
+const CATEGORY_ORDER: PatternCategory[] = ['ambient', 'generative', 'audio', 'beat', 'static'];
+function groupedPatternSelect(
+  patterns: Record<string, { name: string; category: PatternCategory }>,
+  value: string,
+) {
+  const s = document.createElement('select');
+  const byCat = new Map<PatternCategory, Array<[string, string]>>();
+  for (const [key, entry] of Object.entries(patterns)) {
+    const arr = byCat.get(entry.category) ?? [];
+    arr.push([key, entry.name]);
+    byCat.set(entry.category, arr);
+  }
+  for (const cat of CATEGORY_ORDER) {
+    const items = byCat.get(cat);
+    if (!items?.length) continue;
+    const group = document.createElement('optgroup');
+    group.label = CATEGORY_LABEL[cat];
+    for (const [key, name] of items) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = name;
+      group.appendChild(opt);
+    }
+    s.appendChild(group);
   }
   s.value = value;
   return s;

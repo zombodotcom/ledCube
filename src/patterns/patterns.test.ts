@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { builtinPatterns, compilePattern } from './index';
-import type { AudioFrame } from '../types';
+import { buildGridIndex, buildPixelMap, generateStrips } from '../geometry';
+import { gameOfLife } from './gameOfLife';
+import type { AudioFrame, PatternCtx } from '../types';
 
 function makeAudio(opts: Partial<AudioFrame> = {}): AudioFrame {
   const fft = new Float32Array(64);
@@ -114,6 +116,72 @@ describe('compilePattern', () => {
 
   it('throws for syntactically invalid source', () => {
     expect(() => compilePattern('return function( { not js }')).toThrow();
+  });
+});
+
+describe('Game of Life (with ctx)', () => {
+  function makeCtx(N: number, prevColors?: Float32Array): PatternCtx {
+    const strips = generateStrips({ mode: 'uniform', gridN: 4, spacing_m: 0.3, lengths_m: [1], density: 30, seed: 0 });
+    const map = buildPixelMap(strips);
+    const grid = buildGridIndex(map);
+    return {
+      pixelCount: N,
+      grid,
+      state: {},
+      prevColors: prevColors ?? new Float32Array(N * 3),
+      dt: 0.016,
+    };
+  }
+
+  it('produces in-bounds output for every pixel when ctx is provided', () => {
+    const audio = makeAudio({ tint1: [0.9, 0.4, 0.7], tint2: [0.2, 0.7, 1] });
+    const N = 16 * 30; // matches makeCtx layout: 4×4 grid × 1m × 30/m
+    const ctx = makeCtx(N);
+    const out: [number, number, number] = [0, 0, 0];
+    for (let i = 0; i < N; i++) {
+      out[0] = out[1] = out[2] = 0;
+      gameOfLife(i, 0, 0, 0.5, 0.5, audio, out, ctx);
+      for (const v of out) {
+        expect(Number.isFinite(v)).toBe(true);
+        expect(v).toBeGreaterThanOrEqual(-0.001);
+        expect(v).toBeLessThanOrEqual(1.51);
+      }
+    }
+  });
+
+  it('lights up at least one pixel after init', () => {
+    const audio = makeAudio({ tint1: [1, 1, 1] });
+    const N = 16 * 30;
+    const ctx = makeCtx(N);
+    const out: [number, number, number] = [0, 0, 0];
+    let lit = 0;
+    for (let i = 0; i < N; i++) {
+      out[0] = out[1] = out[2] = 0;
+      gameOfLife(i, 0, 0, 0.5, 0.5, audio, out, ctx);
+      if (out[0] + out[1] + out[2] > 0.01) lit++;
+    }
+    expect(lit).toBeGreaterThan(0);
+  });
+
+  it('ticks deterministically given a fixed initial cell state', () => {
+    const audio = makeAudio({ tint1: [1, 0, 0] });
+    const N = 16 * 30;
+    const ctxA = makeCtx(N);
+    const ctxB = makeCtx(N);
+    // First call inits randomly → seed both ctxs with same cells, then drive ticks
+    const out: [number, number, number] = [0, 0, 0];
+    gameOfLife(0, 0, 0, 0.5, 0, audio, out, ctxA);
+    gameOfLife(0, 0, 0, 0.5, 0, audio, out, ctxB);
+    const stA = ctxA.state.gol as { cells: Uint8Array };
+    const stB = ctxB.state.gol as { cells: Uint8Array };
+    stB.cells.set(stA.cells);
+    // Advance both far enough to trigger a tick
+    const tFuture = 0.5; // > 0.33s tickInterval at speed=1
+    for (let i = 0; i < N; i++) {
+      gameOfLife(i, 0, 0, 0.5, tFuture, audio, out, ctxA);
+      gameOfLife(i, 0, 0, 0.5, tFuture, audio, out, ctxB);
+    }
+    expect(Array.from(stA.cells)).toEqual(Array.from(stB.cells));
   });
 });
 
