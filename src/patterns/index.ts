@@ -257,39 +257,64 @@ return function(i, x, y, z, t, audio, out) {
   out[1] = (audio.tint1[1]*(1-tintMix) + audio.tint2[1]*tintMix) * k;
   out[2] = (audio.tint1[2]*(1-tintMix) + audio.tint2[2]*tintMix) * k;
 };`,
-  golSimple: `// Classic single-species Conway. Quick reseed on die-out or stagnation.
-let cells, next, birthT, deathT, lastTick = -1, popHistory = [];
-function fillRandom(t) {
-  for (let k = 0; k < cells.length; k++) {
-    cells[k] = Math.random() < 0.28 ? 1 : 0;
-    if (cells[k]) birthT[k] = t;
+  golSimple: `// Conway with a per-cell hue. New cells inherit circular-mean hue from
+// their 3 parents + a tiny mutation. Alive cells drift slowly. The colors
+// emerge LOCALLY — no fixed palette, blended territories.
+let cells, next, hue, nextHue, birthT, deathT, lastTick = -1, popHistory = [];
+function hsl(h, s, l, out) {
+  h = ((h % 1) + 1) % 1;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => { const k = (n + h * 12) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+  out[0] = f(0); out[1] = f(8); out[2] = f(4);
+}
+function reseed(N, t) {
+  for (let k = 0; k < N; k++) {
+    if (Math.random() < 0.28) { cells[k] = 1; hue[k] = Math.random(); birthT[k] = t; }
+    else { cells[k] = 0; deathT[k] = 0; }
   }
+  popHistory.length = 0; lastTick = t;
 }
 return function(i, x, y, z, t, audio, out, ctx) {
   if (!ctx) { out[0]=audio.tint1[0]*0.05; out[1]=audio.tint1[1]*0.05; out[2]=audio.tint1[2]*0.05; return; }
   const N = ctx.pixelCount;
   if (!cells || cells.length !== N) {
     cells = new Uint8Array(N); next = new Uint8Array(N);
+    hue = new Float32Array(N); nextHue = new Float32Array(N);
     birthT = new Float32Array(N); deathT = new Float32Array(N);
-    fillRandom(t); lastTick = t; popHistory = [];
+    reseed(N, t);
   }
   const tickInterval = 0.28 / Math.max(0.2, audio.speed);
   if (i === 0 && t - lastTick >= tickInterval) {
     let alive = 0;
     for (let k = 0; k < N; k++) {
       const ns = ctx.grid.neighborsOf(k);
-      let live = 0;
-      for (let n = 0; n < ns.length; n++) live += cells[ns[n]];
+      let live = 0, cx = 0, cy = 0;
+      for (let n = 0; n < ns.length; n++) {
+        if (cells[ns[n]]) {
+          live++;
+          const h = hue[ns[n]] * Math.PI * 2;
+          cx += Math.cos(h); cy += Math.sin(h);
+        }
+      }
       const was = cells[k];
-      let now = 0;
-      if (was === 1 && (live === 2 || live === 3)) now = 1;
-      else if (was === 0 && live === 3) now = 1;
+      let now = 0, newHue = hue[k];
+      if (was === 1 && (live === 2 || live === 3)) {
+        now = 1;
+        newHue = (hue[k] + (Math.random() - 0.5) * 0.01 + 1) % 1;
+      } else if (was === 0 && live === 3) {
+        now = 1;
+        const meanH = Math.atan2(cy, cx) / (Math.PI * 2);
+        newHue = (meanH + (Math.random() - 0.5) * 0.04 + 1) % 1;
+      }
       next[k] = now;
+      nextHue[k] = newHue;
       if (now) alive++;
       if (was && !now) deathT[k] = t;
       if (!was && now) birthT[k] = t;
     }
-    const tmp = cells; cells = next; next = tmp;
+    const tc = cells, th = hue;
+    cells = next; hue = nextHue;
+    next = tc; nextHue = th;
     lastTick = t;
     popHistory.push(alive);
     if (popHistory.length > 16) popHistory.shift();
@@ -299,17 +324,18 @@ return function(i, x, y, z, t, audio, out, ctx) {
       let v = 0; for (const x of popHistory) v += (x-m)*(x-m);
       sd = Math.sqrt(v / popHistory.length);
     }
-    if (alive < N * 0.008 || sd < 1.0) { fillRandom(t); popHistory.length = 0; }
+    if (alive < N * 0.008 || sd < 1.0) reseed(N, t);
   }
   if (cells[i]) {
     const age = Math.min(1, (t - birthT[i]) / 0.4);
-    const k = 0.45 + 0.55 * age;
-    out[0] = audio.tint1[0]*k; out[1] = audio.tint1[1]*k; out[2] = audio.tint1[2]*k;
+    const k = 0.5 + 0.5 * age;
+    hsl(hue[i], 0.9, 0.55, out);
+    out[0] *= k; out[1] *= k; out[2] *= k;
   } else {
     const age = t - deathT[i];
-    if (age < 0.45 && deathT[i] > 0) {
-      const k = (1 - age/0.45) * 0.3;
-      out[0] = audio.tint2[0]*k; out[1] = audio.tint2[1]*k; out[2] = audio.tint2[2]*k;
+    if (age < 0.35 && deathT[i] > 0) {
+      const k = (1 - age/0.35) * 0.18;
+      out[0] = k; out[1] = k; out[2] = k;
     }
   }
 };`,
@@ -451,7 +477,7 @@ export const builtinPatterns: Record<string, PatternEntry> = {
   // ─── Generative ───
   plasma:      { name: 'Plasma',                 category: 'generative', description: 'Demoscene plasma — smooth color clouds.',               fn: plasma,      source: SOURCES.plasma },
   fireflies:   { name: 'Fireflies',              category: 'generative', description: '32 drifting points blink and weave through the cube.',  fn: fireflies,   source: SOURCES.fireflies },
-  golSimple:   { name: "Conway (classic)",       category: 'generative', description: 'Single-species Conway. Quick reseed when it dies out.', fn: golSimple,   source: SOURCES.golSimple },
+  golSimple:   { name: "Conway (colorful)",      category: 'generative', description: 'Every cell has its own hue; children inherit parents\u2019 color.', fn: golSimple, source: SOURCES.golSimple },
   gameOfLife:  { name: "Conway (multi-species)", category: 'generative', description: '8 species compete via Conway rules. Dominance triggers a split + reshuffle.', fn: gameOfLife, source: SOURCES.gameOfLife },
   rainfall:    { name: 'Rainfall',               category: 'generative', description: 'Drops fall top-to-bottom; speed follows audio energy.', fn: rainfall,    source: SOURCES.rainfall },
   sineWave:    { name: 'Sine wave',              category: 'generative', description: 'Traveling sine-band — no audio needed.',                fn: sineWave,    source: SOURCES.sineWave },

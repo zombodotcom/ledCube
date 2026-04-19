@@ -1,20 +1,46 @@
 import type { PatternFn } from '../types';
 
+// Classic Conway B3/S23 but each cell carries a continuous hue.
+// New cells inherit the average hue of their 3 live parents (with a small
+// random mutation). Surviving cells drift slowly. Result: emergent color
+// territories that blend and evolve across the LED grid.
+
 interface SimpleGolState {
   cells: Uint8Array;
   next: Uint8Array;
+  hue: Float32Array;
+  nextHue: Float32Array;
   birthT: Float32Array;
   deathT: Float32Array;
   lastTick: number;
   popHistory: number[];
-  resetAt: number;
 }
 
-function fillRandom(cells: Uint8Array, birthT: Float32Array, t: number) {
-  for (let k = 0; k < cells.length; k++) {
-    cells[k] = Math.random() < 0.28 ? 1 : 0;
-    if (cells[k]) birthT[k] = t;
+function reseed(st: SimpleGolState, N: number, t: number) {
+  for (let k = 0; k < N; k++) {
+    if (Math.random() < 0.28) {
+      st.cells[k] = 1;
+      st.hue[k] = Math.random();
+      st.birthT[k] = t;
+    } else {
+      st.cells[k] = 0;
+      st.deathT[k] = 0;
+    }
   }
+  st.popHistory.length = 0;
+  st.lastTick = t;
+}
+
+function hslToRgb(h: number, s: number, l: number, out: [number, number, number]) {
+  h = ((h % 1) + 1) % 1;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h * 12) % 12;
+    return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  out[0] = f(0);
+  out[1] = f(8);
+  out[2] = f(4);
 }
 
 export const golSimple: PatternFn = (i, _x, _y, _z, t, audio, out, ctx) => {
@@ -30,13 +56,14 @@ export const golSimple: PatternFn = (i, _x, _y, _z, t, audio, out, ctx) => {
     st = {
       cells: new Uint8Array(N),
       next: new Uint8Array(N),
+      hue: new Float32Array(N),
+      nextHue: new Float32Array(N),
       birthT: new Float32Array(N).fill(t),
       deathT: new Float32Array(N),
       lastTick: t,
       popHistory: [],
-      resetAt: 0,
     };
-    fillRandom(st.cells, st.birthT, t);
+    reseed(st, N, t);
     ctx.state.gol = st;
   }
 
@@ -46,23 +73,43 @@ export const golSimple: PatternFn = (i, _x, _y, _z, t, audio, out, ctx) => {
     for (let k = 0; k < N; k++) {
       const ns = ctx.grid.neighborsOf(k);
       let live = 0;
-      for (let n = 0; n < ns.length; n++) live += st.cells[ns[n]];
+      // Circular mean for hue averaging
+      let cx = 0, cy = 0;
+      for (let n = 0; n < ns.length; n++) {
+        if (st.cells[ns[n]]) {
+          live++;
+          const h = st.hue[ns[n]] * Math.PI * 2;
+          cx += Math.cos(h);
+          cy += Math.sin(h);
+        }
+      }
       const was = st.cells[k];
       let now: 0 | 1 = 0;
-      if (was === 1 && (live === 2 || live === 3)) now = 1;
-      else if (was === 0 && live === 3) now = 1;
+      let newHue = st.hue[k];
+      if (was === 1 && (live === 2 || live === 3)) {
+        now = 1;
+        // Slow drift while alive
+        newHue = (st.hue[k] + (Math.random() - 0.5) * 0.01 + 1) % 1;
+      } else if (was === 0 && live === 3) {
+        now = 1;
+        // Inherit circular-mean of parents + small mutation
+        const meanH = Math.atan2(cy, cx) / (Math.PI * 2);
+        newHue = (meanH + (Math.random() - 0.5) * 0.04 + 1) % 1;
+      }
       st.next[k] = now;
+      st.nextHue[k] = newHue;
       if (now) alive++;
       if (was && !now) st.deathT[k] = t;
       if (!was && now) st.birthT[k] = t;
     }
-    const tmp = st.cells;
+    const tc = st.cells, th = st.hue;
     st.cells = st.next;
-    st.next = tmp;
+    st.hue = st.nextHue;
+    st.next = tc;
+    st.nextHue = th;
     st.lastTick = t;
     st.popHistory.push(alive);
     if (st.popHistory.length > 16) st.popHistory.shift();
-    // Quick reseed: low population or variance stagnant → wipe and start fresh
     let sd = Infinity;
     if (st.popHistory.length >= 10) {
       const m = st.popHistory.reduce((s, v) => s + v, 0) / st.popHistory.length;
@@ -71,25 +118,24 @@ export const golSimple: PatternFn = (i, _x, _y, _z, t, audio, out, ctx) => {
       sd = Math.sqrt(v / st.popHistory.length);
     }
     if (alive < N * 0.008 || sd < 1.0) {
-      fillRandom(st.cells, st.birthT, t);
-      st.popHistory.length = 0;
-      st.resetAt = t;
+      reseed(st, N, t);
     }
   }
 
   if (st.cells[i]) {
     const age = Math.min(1, (t - st.birthT[i]) / 0.4);
-    const k = 0.45 + 0.55 * age;
-    out[0] = audio.tint1[0] * k;
-    out[1] = audio.tint1[1] * k;
-    out[2] = audio.tint1[2] * k;
+    const k = 0.5 + 0.5 * age;
+    hslToRgb(st.hue[i], 0.9, 0.55, out);
+    out[0] *= k;
+    out[1] *= k;
+    out[2] *= k;
   } else {
     const age = t - st.deathT[i];
-    if (age < 0.45 && st.deathT[i] > 0) {
-      const k = (1 - age / 0.45) * 0.3;
-      out[0] = audio.tint2[0] * k;
-      out[1] = audio.tint2[1] * k;
-      out[2] = audio.tint2[2] * k;
+    if (age < 0.35 && st.deathT[i] > 0) {
+      const k = (1 - age / 0.35) * 0.18;
+      out[0] = k;
+      out[1] = k;
+      out[2] = k;
     }
   }
 };
