@@ -10,14 +10,30 @@ import {
   waveformFromByteTime,
 } from './audioMath';
 
+export type AudioSourceKind = 'none' | 'synth' | 'midi' | 'file' | 'mic';
+
+export interface AudioStatus {
+  kind: AudioSourceKind;
+  detail: string;
+  currentSec: number;
+  durationSec: number;
+  loop: boolean;
+}
+
 export interface AudioEngine {
   frame: AudioFrame;
   update(tSec: number): void;
   loadFile(file: File): Promise<void>;
   loadMidi(file: File, opts?: { monitor?: number; waveform?: OscillatorType }): Promise<{ durationSec: number; noteCount: number }>;
   useMic(): Promise<void>;
+  useTabAudio(): Promise<void>;
   useSynth(opts: { kind: SynthKind; freq: number; monitor: number; scale?: ScaleName }): Promise<void>;
   stop(): void;
+  getStatus(): AudioStatus;
+  seek(sec: number): void;
+  setPlaying(playing: boolean): void;
+  setLoop(loop: boolean): void;
+  setMicGain(gain: number): void;
   setBeatSensitivity(mul: number): void;
   setTint1(c: [number, number, number]): void;
   setTint2(c: [number, number, number]): void;
@@ -82,8 +98,18 @@ export function createAudioEngine(): AudioEngine {
   let currentSource: AudioNode | null = null;
   let currentHtmlEl: HTMLAudioElement | null = null;
   let micStream: MediaStream | null = null;
+  let micGainNode: GainNode | null = null;
   let synth: SynthState | null = null;
   let beatSensitivity = 1.4;
+
+  // Status tracking for the UI
+  let statusKind: AudioSourceKind = 'none';
+  let statusDetail = '';
+  let statusLoop = false;
+  let statusDurationSec = 0;
+
+  // Mic gain (user-controllable) and AGC smoothing
+  let micGainTarget = 3.0;
 
   interface ActiveMidiNote {
     note: number;
@@ -123,6 +149,10 @@ export function createAudioEngine(): AudioEngine {
       micStream.getTracks().forEach((t) => t.stop());
       micStream = null;
     }
+    if (micGainNode) {
+      try { micGainNode.disconnect(); } catch {}
+      micGainNode = null;
+    }
     if (synth) {
       for (const id of synth.intervals) window.clearInterval(id);
       for (const fn of synth.stopFns) { try { fn(); } catch {} }
@@ -140,6 +170,9 @@ export function createAudioEngine(): AudioEngine {
     }
     frame.midiNotes.fill(0);
     currentSource = null;
+    statusKind = 'none';
+    statusDetail = '';
+    statusDurationSec = 0;
   }
 
   function makeNoiseBuf(durSec: number): AudioBuffer {
@@ -520,33 +553,128 @@ export function createAudioEngine(): AudioEngine {
     isActive() {
       return currentSource !== null || synth !== null || midi !== null;
     },
+    getStatus(): AudioStatus {
+      let currentSec = 0;
+      if (midi) {
+        currentSec = Math.max(0, ctx.currentTime - midi.startCtxTime);
+      } else if (currentHtmlEl) {
+        currentSec = currentHtmlEl.currentTime;
+      }
+      return {
+        kind: statusKind,
+        detail: statusDetail,
+        currentSec,
+        durationSec: statusDurationSec,
+        loop: statusLoop,
+      };
+    },
+    seek(sec: number) {
+      if (midi) {
+        midi.startCtxTime = ctx.currentTime - sec;
+        // Cancel any in-flight notes & rewind nextIdx
+        for (const a of midi.active) {
+          try { a.osc.stop(); a.osc.disconnect(); a.gain.disconnect(); } catch {}
+        }
+        midi.active = [];
+        let idx = 0;
+        while (idx < midi.notes.length && midi.notes[idx].startSec < sec) idx++;
+        midi.nextIdx = idx;
+        frame.midiNotes.fill(0);
+      } else if (currentHtmlEl) {
+        try { currentHtmlEl.currentTime = sec; } catch {}
+      }
+    },
+    setPlaying(playing: boolean) {
+      if (currentHtmlEl) {
+        if (playing) currentHtmlEl.play().catch(() => {});
+        else currentHtmlEl.pause();
+      }
+      // MIDI play/pause by freezing/resuming the startCtxTime offset
+      if (midi) {
+        if (!playing && midi.schedulerId !== -1) {
+          window.clearInterval(midi.schedulerId);
+          midi.schedulerId = -1;
+        } else if (playing && midi.schedulerId === -1) {
+          // Caller should re-call loadMidi if fully stopped
+        }
+      }
+    },
+    setLoop(loop: boolean) {
+      statusLoop = loop;
+      if (currentHtmlEl) currentHtmlEl.loop = loop;
+    },
+    setMicGain(gain: number) {
+      micGainTarget = Math.max(0, Math.min(20, gain));
+      if (micGainNode) {
+        micGainNode.gain.setTargetAtTime(micGainTarget, ctx.currentTime, 0.02);
+      }
+    },
     async loadFile(file: File) {
       detach();
       if (ctx.state === 'suspended') await ctx.resume();
       const el = new Audio();
       el.src = URL.createObjectURL(file);
       el.crossOrigin = 'anonymous';
-      el.loop = true;
+      el.loop = statusLoop;
       await el.play().catch(() => {});
       const node = ctx.createMediaElementSource(el);
       node.connect(analyser);
       analyser.connect(ctx.destination);
       currentSource = node;
       currentHtmlEl = el;
+      statusKind = 'file';
+      statusDetail = file.name;
+      statusDurationSec = isFinite(el.duration) ? el.duration : 0;
+      el.addEventListener('loadedmetadata', () => {
+        statusDurationSec = isFinite(el.duration) ? el.duration : 0;
+      });
     },
     async useMic() {
       detach();
       if (ctx.state === 'suspended') await ctx.resume();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
       micStream = stream;
       const node = ctx.createMediaStreamSource(stream);
-      node.connect(analyser);
+      micGainNode = ctx.createGain();
+      micGainNode.gain.value = micGainTarget;
+      node.connect(micGainNode);
+      micGainNode.connect(analyser);
       currentSource = node;
+      statusKind = 'mic';
+      statusDetail = 'microphone';
+    },
+    async useTabAudio() {
+      detach();
+      if (ctx.state === 'suspended') await ctx.resume();
+      const stream: MediaStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true, // required by spec; we discard it
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        stream.getTracks().forEach((t) => t.stop());
+        throw new Error('No audio track captured — re-share the tab and tick "Share tab audio".');
+      }
+      // Keep only the audio track (drop video)
+      stream.getVideoTracks().forEach((t) => t.stop());
+      micStream = stream;
+      const node = ctx.createMediaStreamSource(new MediaStream(audioTracks));
+      micGainNode = ctx.createGain();
+      micGainNode.gain.value = 1.0;
+      node.connect(micGainNode);
+      micGainNode.connect(analyser);
+      currentSource = node;
+      statusKind = 'file';
+      statusDetail = 'tab audio capture';
     },
     async useSynth(opts) {
       detach();
       if (ctx.state === 'suspended') await ctx.resume();
       synth = buildSynth(opts.kind, opts.freq, opts.monitor, opts.scale ?? 'major');
+      statusKind = 'synth';
+      statusDetail = `${opts.kind}${opts.scale ? ' · ' + opts.scale : ''}`;
     },
     async loadMidi(file, opts) {
       detach();
@@ -579,6 +707,9 @@ export function createAudioEngine(): AudioEngine {
         schedulerId: 0,
         active: [],
       };
+      statusKind = 'midi';
+      statusDetail = file.name;
+      statusDurationSec = parsed.durationSec;
 
       const schedAhead = 0.25;
       const tick = () => {
@@ -586,6 +717,11 @@ export function createAudioEngine(): AudioEngine {
         const nowCtx = ctx.currentTime;
         const elapsed = nowCtx - midi.startCtxTime;
         if (elapsed > midi.durationSec + 1.5) {
+          if (!statusLoop) {
+            // Reached the end and loop off — stay paused at the end
+            midi.startCtxTime = nowCtx - midi.durationSec;
+            return;
+          }
           midi.startCtxTime = nowCtx + 0.1;
           midi.nextIdx = 0;
           midi.active = [];

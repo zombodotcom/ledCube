@@ -187,6 +187,51 @@ describe('Game of Life (with ctx)', () => {
   });
 });
 
+describe('palette responsiveness', () => {
+  // Patterns that legitimately keep tint1-only semantics
+  // Skip patterns that require ctx (won't render anything in this pass) or that
+  // intentionally keep a single-tint palette (solidTint, embers).
+  const SKIP = new Set([
+    'solidTint', 'embers',
+    'cubeSpectrogram', 'pianoRoll', 'golSimple', 'gameOfLife',
+  ]);
+  const paletteA = new Float32Array([1, 0, 0, 1, 0.3, 0, 1, 0.5, 0, 1, 0.7, 0, 1, 1, 0]); // warm
+  const paletteB = new Float32Array([0, 0, 1, 0, 0.3, 1, 0, 0.5, 1, 0, 0.7, 1, 0, 1, 1]); // cool
+
+  for (const [key, entry] of Object.entries(builtinPatterns)) {
+    if (SKIP.has(key)) continue;
+    it(`${key} responds to palette changes`, () => {
+      const out: [number, number, number] = [0, 0, 0];
+      const tally: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
+      // Warm palette pass
+      const warmAudio = makeAudio({ paletteStops: paletteA, beat: true });
+      for (let i = 0; i < COORDS.length; i++) {
+        const [x, y, z] = COORDS[i];
+        out[0] = out[1] = out[2] = 0;
+        entry.fn(i, x, y, z, 1.2, warmAudio, out);
+        tally[0] += out[0]; tally[1] += out[1]; tally[2] += out[2];
+      }
+      // Cool palette pass
+      const coolAudio = makeAudio({ paletteStops: paletteB, beat: true });
+      for (let i = 0; i < COORDS.length; i++) {
+        const [x, y, z] = COORDS[i];
+        out[0] = out[1] = out[2] = 0;
+        entry.fn(i, x, y, z, 1.2, coolAudio, out);
+        tally[3] += out[0]; tally[4] += out[1]; tally[5] += out[2];
+      }
+      const warmRed = tally[0], coolRed = tally[3];
+      const warmBlue = tally[2], coolBlue = tally[5];
+      // Warm palette should produce strictly more red than cool, and cool more blue.
+      // Relax: just require the sums differ meaningfully.
+      const totalWarm = tally[0] + tally[1] + tally[2];
+      const totalCool = tally[3] + tally[4] + tally[5];
+      if (totalWarm < 0.1 && totalCool < 0.1) return; // pattern outputs nothing for this audio profile — skip
+      expect(warmRed).toBeGreaterThan(coolRed);
+      expect(coolBlue).toBeGreaterThan(warmBlue);
+    });
+  }
+});
+
 describe('tint responsiveness', () => {
   it('solidTint respects tint1 color', () => {
     const out: [number, number, number] = [0, 0, 0];

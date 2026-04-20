@@ -40,7 +40,7 @@ let activePattern: PatternFn = builtinPatterns[activePatternKey].fn;
 let activeSource = builtinPatterns[activePatternKey].source;
 let patternState: Record<string, unknown> = {};
 const scope = createScope(scopeRoot);
-let brightness = 0.25;
+let brightnessSlider = 0.55; // raw slider 0..1; effective = slider * slider
 let showElectrical = false;
 let electrical: ElectricalConfig = defaultElectrical();
 let lastElecT = 0;
@@ -92,7 +92,7 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
     scene.setGlowStrength(s);
   },
   onBrightness(b) {
-    brightness = b;
+    brightnessSlider = b;
   },
   async onAudioFile(file) {
     try {
@@ -107,11 +107,11 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
       const info = await audio.loadMidi(file);
       scope.setVisible(true);
       if (activePatternKey !== 'pianoRoll') {
-        // Auto-switch to piano roll when a MIDI file loads
         activePatternKey = 'pianoRoll';
         activePattern = builtinPatterns.pianoRoll.fn;
         activeSource = builtinPatterns.pianoRoll.source;
         patternState = {};
+        ui.setActivePattern('pianoRoll');
       }
       console.info(`MIDI loaded: ${info.noteCount} notes, ${info.durationSec.toFixed(1)}s`);
     } catch (e) {
@@ -126,6 +126,15 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
       alert('Mic failed: ' + (e as Error).message);
     }
   },
+  async onAudioTabCapture() {
+    try {
+      await audio.useTabAudio();
+      scope.setVisible(true);
+    } catch (e) {
+      alert('Tab capture failed: ' + (e as Error).message);
+    }
+  },
+  onYouTubeUrl(url) { openYouTubePlayer(url); },
   async onAudioSynth(opts) {
     try {
       await audio.useSynth(opts);
@@ -149,6 +158,10 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
   onPalette(name) { audio.setPalette(name); },
   onSpeed(s) { audio.setSpeed(s); },
   onScale(s) { audio.setScale(s); },
+  onAudioSeek(sec) { audio.seek(sec); },
+  onAudioLoop(loop) { audio.setLoop(loop); },
+  onAudioPlayPause(playing) { audio.setPlaying(playing); },
+  onMicGain(gain) { audio.setMicGain(gain); },
   onBeatSensitivity(mul) {
     audio.setBeatSensitivity(mul);
   },
@@ -169,6 +182,57 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
     downloadText('power-report.md', exportPowerReport(map, electrical, r), 'text/markdown');
   },
 });
+
+function extractYouTubeId(url: string): string | null {
+  const patterns = [
+    /[?&]v=([\w-]{11})/,
+    /youtu\.be\/([\w-]{11})/,
+    /youtube\.com\/embed\/([\w-]{11})/,
+    /youtube\.com\/shorts\/([\w-]{11})/,
+  ];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) return m[1];
+  }
+  if (/^[\w-]{11}$/.test(url)) return url;
+  return null;
+}
+
+let ytPanel: HTMLDivElement | null = null;
+function openYouTubePlayer(url: string) {
+  const id = extractYouTubeId(url);
+  if (!id) {
+    alert('Could not parse a YouTube video ID from that URL');
+    return;
+  }
+  if (!ytPanel) {
+    ytPanel = document.createElement('div');
+    ytPanel.style.cssText =
+      'position: fixed; bottom: 12px; right: 12px; width: 320px; height: 200px; ' +
+      'background: #000; border: 1px solid #2a2a31; border-radius: 8px; overflow: hidden; z-index: 25; ' +
+      'box-shadow: 0 8px 24px rgba(0,0,0,0.5);';
+    const close = document.createElement('button');
+    close.textContent = '✕';
+    close.style.cssText =
+      'position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; padding: 0; ' +
+      'background: rgba(0,0,0,0.6); color: #fff; border: 1px solid #444; border-radius: 4px; ' +
+      'cursor: pointer; z-index: 1; font-size: 14px;';
+    close.addEventListener('click', () => {
+      ytPanel?.remove();
+      ytPanel = null;
+    });
+    ytPanel.appendChild(close);
+    document.body.appendChild(ytPanel);
+  }
+  const existingIframe = ytPanel.querySelector('iframe');
+  if (existingIframe) existingIframe.remove();
+  const iframe = document.createElement('iframe');
+  iframe.src = `https://www.youtube.com/embed/${id}?autoplay=1`;
+  iframe.style.cssText = 'width: 100%; height: 100%; border: 0;';
+  iframe.allow = 'autoplay; encrypted-media';
+  iframe.allowFullscreen = true;
+  ytPanel.appendChild(iframe);
+}
 
 function refreshSummary() {
   const estAmps = map.count * electrical.maxCurrentPerLED;
@@ -233,7 +297,7 @@ function render(nowMs: number) {
   const colors = scene.colors;
   const N = map.count;
   const pattern = activePattern;
-  const br = brightness;
+  const br = brightnessSlider * brightnessSlider; // perceptual gamma
   if (prevColors.length !== colors.length) prevColors = new Float32Array(colors.length);
   const ctx: PatternCtx = {
     pixelCount: N,
@@ -284,8 +348,9 @@ function render(nowMs: number) {
   scene.render();
 
   if (audio.isActive()) scope.draw(frame);
+  ui.setAudioStatus(audio.getStatus());
 
-  const estAmps = showElectrical ? lastElecResult.totalCurrent : N * electrical.maxCurrentPerLED * brightness * 0.1;
+  const estAmps = showElectrical ? lastElecResult.totalCurrent : N * electrical.maxCurrentPerLED * br * 0.1;
   updateStats(
     statsRoot,
     fps,

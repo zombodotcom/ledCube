@@ -103,6 +103,22 @@
       details.section[open] > summary::before { transform: rotate(90deg); }
       details.section > summary:hover { color: var(--accent); }
       details.section > .section-body { padding: 0 0 12px; }
+
+      .pattern-list { max-height: 260px; overflow-y: auto; margin-bottom: 6px; display: flex; flex-direction: column; gap: 2px; }
+      .pattern-cat { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 6px 2px 2px; font-weight: 600; }
+      .pattern-btn { display: block; width: 100%; text-align: left; padding: 6px 8px; background: #0e0e12; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--text); transition: border-color 0.1s, background 0.1s; }
+      .pattern-btn:hover { border-color: var(--accent); }
+      .pattern-btn.active { border-color: var(--accent); background: rgba(124, 224, 255, 0.12); }
+      .pattern-btn .pname { font-size: 12px; font-weight: 600; color: var(--text); line-height: 1.2; }
+      .pattern-btn.active .pname { color: var(--accent); }
+      .pattern-btn .pdesc { font-size: 10px; color: var(--muted); line-height: 1.3; margin-top: 2px; }
+
+      .audio-status { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin-bottom: 6px; background: #0e0e12; border: 1px solid var(--border); border-radius: 6px; font-size: 11px; }
+      .audio-status .dot { font-size: 14px; }
+      .audio-status .dot.off { color: var(--muted); }
+      .audio-status .dot.on { color: var(--accent); }
+      .audio-status .label { color: var(--text); font-weight: 500; }
+      .timeline-wrap { margin-bottom: 8px; }
       label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; color: var(--muted); }
       label > span:last-child { color: var(--text); }
       input[type="range"] { flex: 1; min-width: 0; }

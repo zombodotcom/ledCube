@@ -1,4 +1,5 @@
 import type { PatternFn } from '../types';
+import { paletteLerp } from '../palettes';
 
 // Scrolling 3D spectrogram.
 //   X axis = time (oldest on the left, newest on the right — scrolls each tick)
@@ -81,9 +82,16 @@ export const cubeSpectrogram: PatternFn = (_i, x, y, z, _t, audio, out, ctx) => 
   const mag = st.history[col * st.rows + row];
 
   if (zNorm > mag) return;
-  // Normalize so the bar's top fades to red and the bottom stays cool
   const relHeight = zNorm / Math.max(0.05, mag);
-  heatmap(relHeight * 0.9 + mag * 0.1, out);
+  const v = relHeight * 0.9 + mag * 0.1;
+  // Blend the intensity heatmap (shape) with the user's palette (color feel)
+  const h: [number, number, number] = [0, 0, 0];
+  heatmap(v, h);
+  const p: [number, number, number] = [0, 0, 0];
+  paletteLerp(audio.paletteStops, v, p);
+  const mix = 0.55;
   const k = 0.6 + 0.4 * mag;
-  out[0] *= k; out[1] *= k; out[2] *= k;
+  out[0] = (h[0] * (1 - mix) + p[0] * mix) * k;
+  out[1] = (h[1] * (1 - mix) + p[1] * mix) * k;
+  out[2] = (h[2] * (1 - mix) + p[2] * mix) * k;
 };

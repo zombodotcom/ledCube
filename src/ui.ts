@@ -14,10 +14,16 @@ export interface UICallbacks {
   onAudioFile(file: File): void;
   onAudioMidi(file: File): void;
   onAudioMic(): void;
+  onAudioTabCapture(): void;
+  onYouTubeUrl(url: string): void;
   onAudioSynth(opts: { kind: SynthKind; freq: number; monitor: number; scale: ScaleName }): void;
   onSynthFreq(freq: number): void;
   onSynthMonitor(g: number): void;
   onAudioStop(): void;
+  onAudioSeek(sec: number): void;
+  onAudioLoop(loop: boolean): void;
+  onAudioPlayPause(playing: boolean): void;
+  onMicGain(gain: number): void;
   onBeatSensitivity(mul: number): void;
   onTint1(c: [number, number, number]): void;
   onTint2(c: [number, number, number]): void;
@@ -34,6 +40,8 @@ export interface UICallbacks {
 export interface UIHandles {
   el: HTMLElement;
   setCount(n: number, meters: number, estAmps: number): void;
+  setAudioStatus(s: { kind: string; detail: string; currentSec: number; durationSec: number; loop: boolean }): void;
+  setActivePattern(key: string): void;
 }
 
 export interface UIInitialState {
@@ -123,17 +131,48 @@ export function buildUI(
   applyBtn.addEventListener('click', () => cb.onLayoutChange(gatherLayout()));
 
   section('Pattern', 'pattern', true);
-  const patSel = groupedPatternSelect(patterns, activePatternKey);
-  cur.appendChild(row('Pattern', patSel));
-  const patDesc = document.createElement('div');
-  patDesc.style.cssText = 'font-size: 11px; color: var(--muted); margin: 4px 2px 6px; line-height: 1.35;';
-  patDesc.textContent = patterns[activePatternKey]?.description ?? '';
-  cur.appendChild(patDesc);
-  patSel.addEventListener('change', () => {
-    patDesc.textContent = patterns[patSel.value]?.description ?? '';
-    cb.onPatternChange(patSel.value);
-  });
+  const patListWrap = document.createElement('div');
+  patListWrap.className = 'pattern-list';
+  cur.appendChild(patListWrap);
+  const patButtons = new Map<string, HTMLButtonElement>();
+
+  function rebuildPatternList() {
+    patListWrap.innerHTML = '';
+    patButtons.clear();
+    const byCat = new Map<PatternCategory, Array<[string, { name: string; description: string }]>>();
+    for (const [k, e] of Object.entries(patterns)) {
+      const arr = byCat.get(e.category) ?? [];
+      arr.push([k, e]);
+      byCat.set(e.category, arr);
+    }
+    for (const cat of CATEGORY_ORDER) {
+      const items = byCat.get(cat);
+      if (!items?.length) continue;
+      const label = document.createElement('div');
+      label.className = 'pattern-cat';
+      label.textContent = CATEGORY_LABEL[cat];
+      patListWrap.appendChild(label);
+      for (const [key, e] of items) {
+        const btn = document.createElement('button');
+        btn.className = 'pattern-btn' + (key === activePatternKey ? ' active' : '');
+        btn.innerHTML = `<div class="pname">${e.name}</div><div class="pdesc">${e.description}</div>`;
+        btn.addEventListener('click', () => {
+          setActive(key);
+          cb.onPatternChange(key);
+        });
+        patListWrap.appendChild(btn);
+        patButtons.set(key, btn);
+      }
+    }
+  }
+  function setActive(key: string) {
+    activePatternKey = key;
+    for (const [k, b] of patButtons) b.classList.toggle('active', k === key);
+  }
+  rebuildPatternList();
+
   const editBtn = button('Edit source…');
+  editBtn.style.marginTop = '6px';
   cur.appendChild(editBtn);
   editBtn.addEventListener('click', () => cb.onOpenEditor());
 
@@ -211,7 +250,8 @@ export function buildUI(
   cur.appendChild(row('Scale', scale));
   scale.addEventListener('input', () => cb.onScale(+scale.value));
 
-  const brightness = rangeEl(0.25, 0, 1, 0.01);
+  // Brightness slider uses linear 0..1 UI but main.ts applies (slider*slider) gamma
+  const brightness = rangeEl(0.55, 0, 1, 0.01);
   cur.appendChild(row('Brightness', brightness));
   brightness.addEventListener('input', () => cb.onBrightness(+brightness.value));
 
@@ -231,6 +271,52 @@ export function buildUI(
   glowStrength.addEventListener('input', () => cb.onGlowStrength(+glowStrength.value));
 
   section('Audio source', 'audio', true);
+
+  const statusBadge = document.createElement('div');
+  statusBadge.className = 'audio-status';
+  statusBadge.innerHTML = '<span class="dot off">◎</span> <span class="label">Stopped</span>';
+  cur.appendChild(statusBadge);
+
+  // Timeline (shown for file + midi sources)
+  const timelineWrap = document.createElement('div');
+  timelineWrap.className = 'timeline-wrap';
+  timelineWrap.style.display = 'none';
+  const timelineRow = document.createElement('div');
+  timelineRow.style.cssText = 'display: flex; align-items: center; gap: 6px; margin: 6px 0;';
+  const playBtn = button('⏯');
+  playBtn.style.cssText = 'padding: 4px 10px; min-width: 40px;';
+  const loopBtn = button('↻');
+  loopBtn.style.cssText = 'padding: 4px 10px; min-width: 40px;';
+  loopBtn.title = 'Loop';
+  const seekSlider = rangeEl(0, 0, 1, 0.001);
+  seekSlider.style.flex = '1';
+  const timeLabel = document.createElement('span');
+  timeLabel.style.cssText = 'font-size: 10px; color: var(--muted); min-width: 72px; text-align: right;';
+  timeLabel.textContent = '0:00 / 0:00';
+  timelineRow.appendChild(playBtn);
+  timelineRow.appendChild(loopBtn);
+  timelineRow.appendChild(seekSlider);
+  timelineRow.appendChild(timeLabel);
+  timelineWrap.appendChild(timelineRow);
+  cur.appendChild(timelineWrap);
+
+  let playing = true;
+  playBtn.addEventListener('click', () => {
+    playing = !playing;
+    cb.onAudioPlayPause(playing);
+  });
+  let loopOn = false;
+  loopBtn.addEventListener('click', () => {
+    loopOn = !loopOn;
+    loopBtn.classList.toggle('primary', loopOn);
+    cb.onAudioLoop(loopOn);
+  });
+  let userDragging = false;
+  seekSlider.addEventListener('pointerdown', () => { userDragging = true; });
+  seekSlider.addEventListener('pointerup', () => { userDragging = false; });
+  seekSlider.addEventListener('change', () => {
+    cb.onAudioSeek(+seekSlider.value);
+  });
 
   const synthKind = selectEl(
     ['drum', 'chord', 'arpeggio', 'pluck', 'siren', 'fmBell', 'bassDrop', 'sweep', 'sine', 'square', 'sawtooth', 'triangle', 'noise'],
@@ -276,9 +362,41 @@ export function buildUI(
     const f = midiInput.files?.[0];
     if (f) cb.onAudioMidi(f);
   });
+  const micRow = document.createElement('div');
+  micRow.className = 'row';
   const micBtn = button('Use mic');
-  cur.appendChild(micBtn);
+  const tabBtn = button('Capture tab audio');
+  tabBtn.title = 'Share a browser tab with "Share tab audio" checked — works with YouTube, Spotify Web, etc.';
+  micRow.appendChild(micBtn);
+  micRow.appendChild(tabBtn);
+  cur.appendChild(micRow);
   micBtn.addEventListener('click', () => cb.onAudioMic());
+  tabBtn.addEventListener('click', () => cb.onAudioTabCapture());
+  const micGain = rangeEl(3, 0, 15, 0.1);
+  cur.appendChild(row('Mic gain', micGain));
+  micGain.addEventListener('input', () => cb.onMicGain(+micGain.value));
+
+  // YouTube URL → opens iframe (audio routed via tab capture)
+  const ytInput = document.createElement('input');
+  ytInput.type = 'text';
+  ytInput.placeholder = 'YouTube URL…';
+  ytInput.style.cssText = 'flex: 1;';
+  const ytBtn = button('Open');
+  const ytRow = document.createElement('div');
+  ytRow.className = 'row';
+  ytRow.appendChild(ytInput);
+  ytRow.appendChild(ytBtn);
+  cur.appendChild(ytRow);
+  const ytHint = document.createElement('div');
+  ytHint.style.cssText = 'font-size: 10px; color: var(--muted); margin: 2px 2px 6px; line-height: 1.4;';
+  ytHint.textContent = 'Opens in a floating player. Click Capture tab audio + share that tab to analyze it.';
+  cur.appendChild(ytHint);
+  ytBtn.addEventListener('click', () => {
+    if (ytInput.value.trim()) cb.onYouTubeUrl(ytInput.value.trim());
+  });
+  ytInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && ytInput.value.trim()) cb.onYouTubeUrl(ytInput.value.trim());
+  });
   const beatSens = rangeEl(1.4, 1.05, 2.5, 0.05);
   cur.appendChild(row('Beat sensitivity', beatSens));
   beatSens.addEventListener('input', () => cb.onBeatSensitivity(+beatSens.value));
@@ -330,6 +448,13 @@ export function buildUI(
   eE131.addEventListener('click', () => cb.onExportE131());
   ePwr.addEventListener('click', () => cb.onExportPowerReport());
 
+  function fmtTime(sec: number): string {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
   return {
     el: root,
     setCount(n: number, meters: number, estAmps: number) {
@@ -339,6 +464,38 @@ export function buildUI(
       if (kc) kc.textContent = n.toLocaleString();
       if (km) km.textContent = `${meters.toFixed(1)} m`;
       if (ka) ka.textContent = `${estAmps.toFixed(0)} A`;
+    },
+    setAudioStatus(s) {
+      const dot = statusBadge.querySelector('.dot') as HTMLElement | null;
+      const label = statusBadge.querySelector('.label') as HTMLElement | null;
+      if (s.kind === 'none') {
+        dot?.classList.add('off');
+        dot?.classList.remove('on');
+        if (dot) dot.textContent = '◎';
+        if (label) label.textContent = 'Stopped';
+        timelineWrap.style.display = 'none';
+      } else {
+        dot?.classList.remove('off');
+        dot?.classList.add('on');
+        if (dot) dot.textContent = '▶';
+        const kindLabel = s.kind.charAt(0).toUpperCase() + s.kind.slice(1);
+        if (label) label.textContent = `${kindLabel} · ${s.detail}`;
+        const hasTimeline = (s.kind === 'file' || s.kind === 'midi') && s.durationSec > 0;
+        timelineWrap.style.display = hasTimeline ? 'block' : 'none';
+        if (hasTimeline) {
+          if (!userDragging) {
+            seekSlider.min = '0';
+            seekSlider.max = String(s.durationSec);
+            seekSlider.step = '0.01';
+            seekSlider.value = String(s.currentSec);
+          }
+          timeLabel.textContent = `${fmtTime(s.currentSec)} / ${fmtTime(s.durationSec)}`;
+          loopBtn.classList.toggle('primary', s.loop);
+        }
+      }
+    },
+    setActivePattern(key: string) {
+      setActive(key);
     },
   };
 }
@@ -405,33 +562,6 @@ const CATEGORY_LABEL: Record<PatternCategory, string> = {
   static: 'Static',
 };
 const CATEGORY_ORDER: PatternCategory[] = ['ambient', 'generative', 'audio', 'beat', 'static'];
-function groupedPatternSelect(
-  patterns: Record<string, { name: string; category: PatternCategory }>,
-  value: string,
-) {
-  const s = document.createElement('select');
-  const byCat = new Map<PatternCategory, Array<[string, string]>>();
-  for (const [key, entry] of Object.entries(patterns)) {
-    const arr = byCat.get(entry.category) ?? [];
-    arr.push([key, entry.name]);
-    byCat.set(entry.category, arr);
-  }
-  for (const cat of CATEGORY_ORDER) {
-    const items = byCat.get(cat);
-    if (!items?.length) continue;
-    const group = document.createElement('optgroup');
-    group.label = CATEGORY_LABEL[cat];
-    for (const [key, name] of items) {
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = name;
-      group.appendChild(opt);
-    }
-    s.appendChild(group);
-  }
-  s.value = value;
-  return s;
-}
 function numEl(value: number, min: number, max: number, step: number) {
   const i = document.createElement('input');
   i.type = 'number';
