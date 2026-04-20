@@ -22,6 +22,8 @@ function makeAudio(opts: Partial<AudioFrame> = {}): AudioFrame {
     tint2: [0.2, 0.8, 1],
     speed: 1,
     scale: 1,
+    paletteStops: new Float32Array([1,0.3,0.8, 0.6,0.55,0.9, 0.6,0.55,0.9, 0.4,0.67,0.95, 0.2,0.8,1]),
+    midiNotes: new Uint8Array(128),
     ...opts,
   };
 }

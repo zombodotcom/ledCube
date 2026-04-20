@@ -68,11 +68,14 @@
         right: calc(12px + var(--safe-r));
         padding: 8px;
         background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-        width: 240px; display: none;
+        width: 280px; display: none;
+        max-height: calc(100dvh - 200px - var(--safe-t) - var(--safe-b));
+        overflow-y: auto;
         z-index: 20;
       }
       #scope.on { display: block; }
-      #scope canvas { display: block; width: 100%; height: 64px; background: #07070a; border-radius: 4px; }
+      #scope canvas { display: block; width: 100%; height: 56px; background: #07070a; border-radius: 4px; }
+      #scope canvas#scope-spec { height: 96px; }
       #scope .lbl { font-size: 10px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; margin: 4px 2px 2px; }
 
       #editor {
@@ -92,6 +95,14 @@
 
       h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
       hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+      details.section { border-top: 1px solid var(--border); margin: 0; }
+      details.section:first-of-type { border-top: none; }
+      details.section > summary { cursor: pointer; list-style: none; padding: 10px 2px; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 600; user-select: none; display: flex; align-items: center; gap: 6px; }
+      details.section > summary::-webkit-details-marker { display: none; }
+      details.section > summary::before { content: '▸'; display: inline-block; width: 10px; color: var(--accent); transition: transform 0.15s; }
+      details.section[open] > summary::before { transform: rotate(90deg); }
+      details.section > summary:hover { color: var(--accent); }
+      details.section > .section-body { padding: 0 0 12px; }
       label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; color: var(--muted); }
       label > span:last-child { color: var(--text); }
       input[type="range"] { flex: 1; min-width: 0; }
@@ -172,6 +183,8 @@
       <canvas id="scope-wave" width="480" height="128"></canvas>
       <div class="lbl">FFT bands</div>
       <canvas id="scope-fft" width="480" height="128"></canvas>
+      <div class="lbl">Spectrogram (scrolling)</div>
+      <canvas id="scope-spec" width="480" height="128"></canvas>
     </aside>
     <section id="editor">
       <textarea id="editor-text" spellcheck="false"></textarea>

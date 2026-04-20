@@ -102,6 +102,22 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
       alert('Audio load failed: ' + (e as Error).message);
     }
   },
+  async onAudioMidi(file) {
+    try {
+      const info = await audio.loadMidi(file);
+      scope.setVisible(true);
+      if (activePatternKey !== 'pianoRoll') {
+        // Auto-switch to piano roll when a MIDI file loads
+        activePatternKey = 'pianoRoll';
+        activePattern = builtinPatterns.pianoRoll.fn;
+        activeSource = builtinPatterns.pianoRoll.source;
+        patternState = {};
+      }
+      console.info(`MIDI loaded: ${info.noteCount} notes, ${info.durationSec.toFixed(1)}s`);
+    } catch (e) {
+      alert('MIDI load failed: ' + (e as Error).message);
+    }
+  },
   async onAudioMic() {
     try {
       await audio.useMic();
@@ -130,6 +146,7 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
   },
   onTint1(c) { audio.setTint1(c); },
   onTint2(c) { audio.setTint2(c); },
+  onPalette(name) { audio.setPalette(name); },
   onSpeed(s) { audio.setSpeed(s); },
   onScale(s) { audio.setScale(s); },
   onBeatSensitivity(mul) {
@@ -176,6 +193,8 @@ function applyEditor() {
       waveform: new Float32Array(256),
       energy: 0, bass: 0, mid: 0, treble: 0, beat: false, time: 0,
       tint1: [1, 0, 0], tint2: [0, 0, 1], speed: 1, scale: 1,
+      paletteStops: new Float32Array([1,0,0, 0.5,0,0.5, 0,0,1, 0.3,0.3,1, 0.6,0.6,1]),
+      midiNotes: new Uint8Array(128),
     };
     fn(0, 0, 0, 0, 0, dummyAudio, test);
     activePattern = fn;

@@ -1,4 +1,7 @@
 import type { PatternFn } from '../types';
+import { paletteLerp } from '../palettes';
+
+const tmp: [number, number, number] = [0, 0, 0];
 
 export const plasma: PatternFn = (_i, x, y, z, t, audio, out) => {
   const s = audio.scale;
@@ -10,7 +13,8 @@ export const plasma: PatternFn = (_i, x, y, z, t, audio, out) => {
   const v = (a + b + c + d) * 0.25;
   const u = 0.5 + 0.5 * v;
   const k = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(v * 3.14));
-  out[0] = (audio.tint1[0] * (1 - u) + audio.tint2[0] * u) * k;
-  out[1] = (audio.tint1[1] * (1 - u) + audio.tint2[1] * u) * k;
-  out[2] = (audio.tint1[2] * (1 - u) + audio.tint2[2] * u) * k;
+  paletteLerp(audio.paletteStops, u, tmp);
+  out[0] = tmp[0] * k;
+  out[1] = tmp[1] * k;
+  out[2] = tmp[2] * k;
 };

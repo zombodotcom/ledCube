@@ -1,4 +1,7 @@
 import type { PatternFn } from '../types';
+import { paletteLerp } from '../palettes';
+
+const tmp: [number, number, number] = [0, 0, 0];
 
 export const aurora: PatternFn = (_i, x, y, z, t, audio, out) => {
   const T = t * audio.speed * 0.4;
@@ -8,7 +11,8 @@ export const aurora: PatternFn = (_i, x, y, z, t, audio, out) => {
   const zNorm = z / 5;
   const u = Math.max(0, Math.min(1, zNorm * 0.7 + 0.15 + drift * 0.25));
   const veil = 0.35 + 0.65 * Math.max(0, Math.sin(zNorm * 3.14 + drift * 1.5 + T * 0.6));
-  out[0] = (audio.tint1[0] * (1 - u) + audio.tint2[0] * u) * veil;
-  out[1] = (audio.tint1[1] * (1 - u) + audio.tint2[1] * u) * veil;
-  out[2] = (audio.tint1[2] * (1 - u) + audio.tint2[2] * u) * veil;
+  paletteLerp(audio.paletteStops, u, tmp);
+  out[0] = tmp[0] * veil;
+  out[1] = tmp[1] * veil;
+  out[2] = tmp[2] * veil;
 };

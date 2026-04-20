@@ -1,5 +1,6 @@
 import type { ElectricalConfig } from './electrical';
-import type { LayoutConfig, PatternCategory, SynthKind } from './types';
+import type { LayoutConfig, PatternCategory, ScaleName, SynthKind } from './types';
+import { PALETTES, PALETTE_NAMES, type PaletteName } from './palettes';
 
 export interface UICallbacks {
   onLayoutChange(cfg: LayoutConfig): void;
@@ -11,14 +12,16 @@ export interface UICallbacks {
   onGlowStrength(s: number): void;
   onBrightness(b: number): void;
   onAudioFile(file: File): void;
+  onAudioMidi(file: File): void;
   onAudioMic(): void;
-  onAudioSynth(opts: { kind: SynthKind; freq: number; monitor: number }): void;
+  onAudioSynth(opts: { kind: SynthKind; freq: number; monitor: number; scale: ScaleName }): void;
   onSynthFreq(freq: number): void;
   onSynthMonitor(g: number): void;
   onAudioStop(): void;
   onBeatSensitivity(mul: number): void;
   onTint1(c: [number, number, number]): void;
   onTint2(c: [number, number, number]): void;
+  onPalette(name: PaletteName): void;
   onSpeed(s: number): void;
   onScale(s: number): void;
   onElectricalToggle(on: boolean): void;
@@ -50,6 +53,27 @@ export function buildUI(
   cb: UICallbacks,
 ): UIHandles {
   root.innerHTML = '';
+  let cur: HTMLElement = root;
+
+  function section(title: string, key: string, defaultOpen: boolean): HTMLElement {
+    const d = document.createElement('details');
+    d.className = 'section';
+    const stored = localStorage.getItem(`sec:${key}`);
+    d.open = stored === null ? defaultOpen : stored === 'open';
+    const s = document.createElement('summary');
+    s.textContent = title;
+    d.appendChild(s);
+    const body = document.createElement('div');
+    body.className = 'section-body';
+    d.appendChild(body);
+    root.appendChild(d);
+    d.addEventListener('toggle', () => {
+      localStorage.setItem(`sec:${key}`, d.open ? 'open' : 'closed');
+    });
+    cur = body;
+    return body;
+  }
+
   const summary = document.createElement('div');
   summary.className = 'kv';
   summary.innerHTML = `
@@ -58,30 +82,29 @@ export function buildUI(
     <span class="k">Est. full-white</span><span id="k-amps">0 A</span>
   `;
   root.appendChild(summary);
-  root.appendChild(hr());
 
-  root.appendChild(h2('Layout'));
+  section('Layout', 'layout', false);
   const modeSel = selectEl(['uniform', 'varied', 'freeform'], layout.mode);
-  root.appendChild(row('Mode', modeSel));
+  cur.appendChild(row('Mode', modeSel));
   const gridN = numEl(layout.gridN, 1, 40, 1);
-  root.appendChild(row('Grid N × N', gridN));
+  cur.appendChild(row('Grid N × N', gridN));
   const spacing = numEl(layout.spacing_m, 0.05, 2, 0.05);
-  root.appendChild(row('Spacing (m)', spacing));
+  cur.appendChild(row('Spacing (m)', spacing));
   const lengths = inputEl(layout.lengths_m.join(','));
-  root.appendChild(row('Lengths (m, csv)', lengths));
+  cur.appendChild(row('Lengths (m, csv)', lengths));
   const density = numEl(layout.density, 30, 144, 1);
-  root.appendChild(row('LEDs / m', density));
+  cur.appendChild(row('LEDs / m', density));
   const seed = numEl(layout.seed, 0, 99999, 1);
-  root.appendChild(row('Seed', seed));
+  cur.appendChild(row('Seed', seed));
   const freeform = document.createElement('textarea');
   freeform.placeholder = '{ "strips": [{ "id": "s0", "top": [0,0,5], "length_m": 5, "led_density": 60, "led_type": "WS2815" }] }';
   freeform.style.display = layout.mode === 'freeform' ? 'block' : 'none';
   freeform.style.width = '100%';
   freeform.style.height = '80px';
   freeform.value = layout.freeformJson ?? '';
-  root.appendChild(freeform);
+  cur.appendChild(freeform);
   const applyBtn = button('Rebuild layout', 'primary');
-  root.appendChild(applyBtn);
+  cur.appendChild(applyBtn);
 
   function gatherLayout(): LayoutConfig {
     const mode = modeSel.value as LayoutConfig['mode'];
@@ -99,91 +122,139 @@ export function buildUI(
   modeSel.addEventListener('change', () => { freeform.style.display = modeSel.value === 'freeform' ? 'block' : 'none'; });
   applyBtn.addEventListener('click', () => cb.onLayoutChange(gatherLayout()));
 
-  root.appendChild(hr());
-  root.appendChild(h2('Pattern'));
+  section('Pattern', 'pattern', true);
   const patSel = groupedPatternSelect(patterns, activePatternKey);
-  root.appendChild(row('Pattern', patSel));
+  cur.appendChild(row('Pattern', patSel));
   const patDesc = document.createElement('div');
   patDesc.style.cssText = 'font-size: 11px; color: var(--muted); margin: 4px 2px 6px; line-height: 1.35;';
   patDesc.textContent = patterns[activePatternKey]?.description ?? '';
-  root.appendChild(patDesc);
+  cur.appendChild(patDesc);
   patSel.addEventListener('change', () => {
     patDesc.textContent = patterns[patSel.value]?.description ?? '';
     cb.onPatternChange(patSel.value);
   });
   const editBtn = button('Edit source…');
-  root.appendChild(editBtn);
+  cur.appendChild(editBtn);
   editBtn.addEventListener('click', () => cb.onOpenEditor());
 
   const tint1 = colorEl(rgbToHex(initial.tint1));
-  root.appendChild(row('Tint 1', tint1));
-  tint1.addEventListener('input', () => cb.onTint1(hexToRgb(tint1.value)));
   const tint2 = colorEl(rgbToHex(initial.tint2));
-  root.appendChild(row('Tint 2', tint2));
-  tint2.addEventListener('input', () => cb.onTint2(hexToRgb(tint2.value)));
-  const paletteRow = document.createElement('div');
-  paletteRow.className = 'row';
-  for (const [a, b] of PALETTES) {
-    const btn = document.createElement('button');
-    btn.textContent = ' ';
-    btn.title = `${a} / ${b}`;
-    btn.style.background = `linear-gradient(90deg, ${a}, ${b})`;
-    btn.style.height = '22px';
-    btn.style.border = '1px solid var(--border)';
-    btn.addEventListener('click', () => {
-      tint1.value = a; tint2.value = b;
-      cb.onTint1(hexToRgb(a)); cb.onTint2(hexToRgb(b));
-    });
-    paletteRow.appendChild(btn);
+  const customRow = document.createElement('div');
+  customRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; color: var(--muted);';
+  customRow.innerHTML = '<span>Custom colors</span>';
+  customRow.appendChild(tint1);
+  customRow.appendChild(tint2);
+  cur.appendChild(customRow);
+  tint1.addEventListener('input', () => {
+    cb.onTint1(hexToRgb(tint1.value));
+    paletteSel.value = 'custom';
+    cb.onPalette('custom');
+    updatePalettePreview('custom', tint1.value, tint2.value);
+  });
+  tint2.addEventListener('input', () => {
+    cb.onTint2(hexToRgb(tint2.value));
+    paletteSel.value = 'custom';
+    cb.onPalette('custom');
+    updatePalettePreview('custom', tint1.value, tint2.value);
+  });
+
+  // Palette picker with preview swatches
+  const palLabel = document.createElement('label');
+  palLabel.innerHTML = '<span>Palette</span>';
+  const paletteSel = document.createElement('select');
+  for (const name of PALETTE_NAMES) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+    paletteSel.appendChild(opt);
   }
-  root.appendChild(paletteRow);
+  paletteSel.value = 'custom';
+  palLabel.appendChild(paletteSel);
+  cur.appendChild(palLabel);
+
+  const palPreview = document.createElement('div');
+  palPreview.style.cssText = 'height: 18px; border-radius: 4px; border: 1px solid var(--border); margin: 2px 0 6px;';
+  cur.appendChild(palPreview);
+
+  // Scrollable grid of all palette thumbnails for quick visual selection
+  const palGrid = document.createElement('div');
+  palGrid.style.cssText = 'display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px;';
+  for (const name of PALETTE_NAMES) {
+    const thumb = document.createElement('button');
+    thumb.title = name;
+    thumb.style.cssText = 'height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 3px; min-height: 0;';
+    thumb.style.background = paletteToCss(name, tint1.value, tint2.value);
+    thumb.addEventListener('click', () => {
+      paletteSel.value = name;
+      cb.onPalette(name);
+      updatePalettePreview(name, tint1.value, tint2.value);
+    });
+    palGrid.appendChild(thumb);
+  }
+  cur.appendChild(palGrid);
+
+  function updatePalettePreview(name: PaletteName, a: string, b: string) {
+    palPreview.style.background = paletteToCss(name, a, b);
+  }
+  updatePalettePreview('custom', tint1.value, tint2.value);
+
+  paletteSel.addEventListener('change', () => {
+    const name = paletteSel.value as PaletteName;
+    cb.onPalette(name);
+    updatePalettePreview(name, tint1.value, tint2.value);
+  });
 
   const speed = rangeEl(initial.speed, 0, 3, 0.05);
-  root.appendChild(row('Speed', speed));
+  cur.appendChild(row('Speed', speed));
   speed.addEventListener('input', () => cb.onSpeed(+speed.value));
   const scale = rangeEl(initial.scale, 0.1, 4, 0.05);
-  root.appendChild(row('Scale', scale));
+  cur.appendChild(row('Scale', scale));
   scale.addEventListener('input', () => cb.onScale(+scale.value));
 
   const brightness = rangeEl(0.25, 0, 1, 0.01);
-  root.appendChild(row('Brightness', brightness));
+  cur.appendChild(row('Brightness', brightness));
   brightness.addEventListener('input', () => cb.onBrightness(+brightness.value));
 
   const pointSize = rangeEl(4.5, 1, 12, 0.1);
-  root.appendChild(row('Point size', pointSize));
+  cur.appendChild(row('Point size', pointSize));
   pointSize.addEventListener('input', () => cb.onPointSize(+pointSize.value));
 
   const wires = checkEl(false);
-  root.appendChild(row('Show strip wires', wires));
+  cur.appendChild(row('Show strip wires', wires));
   wires.addEventListener('change', () => cb.onShowWires(wires.checked));
 
   const glow = checkEl(false);
-  root.appendChild(row('Glow (bloom)', glow));
+  cur.appendChild(row('Glow (bloom)', glow));
   glow.addEventListener('change', () => cb.onGlow(glow.checked));
   const glowStrength = rangeEl(0.9, 0, 2.5, 0.05);
-  root.appendChild(row('Glow strength', glowStrength));
+  cur.appendChild(row('Glow strength', glowStrength));
   glowStrength.addEventListener('input', () => cb.onGlowStrength(+glowStrength.value));
 
-  root.appendChild(hr());
-  root.appendChild(h2('Audio source'));
+  section('Audio source', 'audio', true);
 
-  const synthKind = selectEl(['sine', 'square', 'sawtooth', 'triangle', 'noise', 'sweep', 'drum'], 'drum');
-  root.appendChild(row('Synth type', synthKind));
-  const synthFreq = numEl(440, 20, 12000, 1);
-  root.appendChild(row('Freq (Hz)', synthFreq));
+  const synthKind = selectEl(
+    ['drum', 'chord', 'arpeggio', 'pluck', 'siren', 'fmBell', 'bassDrop', 'sweep', 'sine', 'square', 'sawtooth', 'triangle', 'noise'],
+    'drum',
+  );
+  cur.appendChild(row('Synth type', synthKind));
+  const synthScale = selectEl(['major', 'minor', 'pentatonic', 'blues', 'chromatic'], 'major');
+  cur.appendChild(row('Scale', synthScale));
+  const synthFreq = numEl(220, 20, 12000, 1);
+  cur.appendChild(row('Root / Freq (Hz)', synthFreq));
   const synthMon = rangeEl(0, 0, 0.3, 0.005);
-  root.appendChild(row('Monitor vol', synthMon));
+  cur.appendChild(row('Monitor vol', synthMon));
   const synthRow = document.createElement('div');
   synthRow.className = 'row';
   const synthStart = button('Start synth', 'primary');
   const synthStop = button('Stop');
   synthRow.appendChild(synthStart);
   synthRow.appendChild(synthStop);
-  root.appendChild(synthRow);
+  cur.appendChild(synthRow);
   synthStart.addEventListener('click', () => cb.onAudioSynth({
     kind: synthKind.value as SynthKind,
     freq: +synthFreq.value,
     monitor: +synthMon.value,
+    scale: synthScale.value as ScaleName,
   }));
   synthStop.addEventListener('click', () => cb.onAudioStop());
   synthFreq.addEventListener('input', () => cb.onSynthFreq(+synthFreq.value));
@@ -192,36 +263,43 @@ export function buildUI(
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.accept = 'audio/*';
-  root.appendChild(row('File', fileInput));
+  cur.appendChild(row('Audio file', fileInput));
   fileInput.addEventListener('change', () => {
     const f = fileInput.files?.[0];
     if (f) cb.onAudioFile(f);
   });
+  const midiInput = document.createElement('input');
+  midiInput.type = 'file';
+  midiInput.accept = '.mid,.midi,audio/midi,audio/x-midi';
+  cur.appendChild(row('MIDI file', midiInput));
+  midiInput.addEventListener('change', () => {
+    const f = midiInput.files?.[0];
+    if (f) cb.onAudioMidi(f);
+  });
   const micBtn = button('Use mic');
-  root.appendChild(micBtn);
+  cur.appendChild(micBtn);
   micBtn.addEventListener('click', () => cb.onAudioMic());
   const beatSens = rangeEl(1.4, 1.05, 2.5, 0.05);
-  root.appendChild(row('Beat sensitivity', beatSens));
+  cur.appendChild(row('Beat sensitivity', beatSens));
   beatSens.addEventListener('input', () => cb.onBeatSensitivity(+beatSens.value));
 
-  root.appendChild(hr());
-  root.appendChild(h2('Electrical'));
+  section('Electrical', 'electrical', false);
   const elecOn = checkEl(false);
-  root.appendChild(row('Voltage heatmap', elecOn));
+  cur.appendChild(row('Voltage heatmap', elecOn));
   elecOn.addEventListener('change', () => cb.onElectricalToggle(elecOn.checked));
 
   const vInj = numEl(electrical.vInjection, 3, 24, 0.5);
-  root.appendChild(row('V injection', vInj));
+  cur.appendChild(row('V injection', vInj));
   const rPerM = numEl(electrical.rPerMeter, 0.05, 2, 0.01);
-  root.appendChild(row('Ω/m (one conductor)', rPerM));
+  cur.appendChild(row('Ω/m (one conductor)', rPerM));
   const iMax = numEl(electrical.maxCurrentPerLED * 1000, 5, 80, 1);
-  root.appendChild(row('mA/LED peak', iMax));
+  cur.appendChild(row('mA/LED peak', iMax));
   const injMode = selectEl(['top', 'top-bottom', 'every-1m'], electrical.injectionMode);
-  root.appendChild(row('Injection', injMode));
+  cur.appendChild(row('Injection', injMode));
   const maxInj = numEl(electrical.maxInjectionAmps, 1, 50, 0.5);
-  root.appendChild(row('Max A / injection', maxInj));
+  cur.appendChild(row('Max A / injection', maxInj));
   const brownV = numEl(electrical.brownoutVolts, 3, 20, 0.1);
-  root.appendChild(row('Brownout V', brownV));
+  cur.appendChild(row('Brownout V', brownV));
 
   function gatherElec(): ElectricalConfig {
     return {
@@ -238,8 +316,7 @@ export function buildUI(
   }
   injMode.addEventListener('change', () => cb.onElectricalChange(gatherElec()));
 
-  root.appendChild(hr());
-  root.appendChild(h2('Export'));
+  section('Export', 'export', false);
   const eRow = document.createElement('div');
   eRow.className = 'row';
   const eMap = button('Pixel map');
@@ -248,7 +325,7 @@ export function buildUI(
   eRow.appendChild(eMap);
   eRow.appendChild(eE131);
   eRow.appendChild(ePwr);
-  root.appendChild(eRow);
+  cur.appendChild(eRow);
   eMap.addEventListener('click', () => cb.onExportPixelMap());
   eE131.addEventListener('click', () => cb.onExportE131());
   ePwr.addEventListener('click', () => cb.onExportPowerReport());
@@ -280,14 +357,14 @@ export function updateStats(el: HTMLElement, fps: number, pixels: number, amps: 
   `;
 }
 
-const PALETTES: Array<[string, string]> = [
-  ['#ff2a6d', '#05d9e8'],
-  ['#ff7a00', '#ffd166'],
-  ['#00f5a0', '#00d9f5'],
-  ['#7b2cbf', '#c77dff'],
-  ['#ff006e', '#3a86ff'],
-  ['#ffffff', '#4444ff'],
-];
+function paletteToCss(name: PaletteName, tint1Hex: string, tint2Hex: string): string {
+  const stops =
+    name === 'custom'
+      ? [tint1Hex, tint1Hex, tint2Hex, tint2Hex]
+      : PALETTES[name].map(([r, g, b]) => `rgb(${(r*255)|0},${(g*255)|0},${(b*255)|0})`);
+  const pct = stops.map((c, i) => `${c} ${Math.round(i / (stops.length - 1) * 100)}%`).join(', ');
+  return `linear-gradient(90deg, ${pct})`;
+}
 
 function rgbToHex(c: [number, number, number]): string {
   const to = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0');
@@ -301,14 +378,6 @@ function hexToRgb(h: string): [number, number, number] {
   return [r, g, b];
 }
 
-function h2(text: string) {
-  const el = document.createElement('h2');
-  el.textContent = text;
-  return el;
-}
-function hr() {
-  return document.createElement('hr');
-}
 function row(label: string, input: HTMLElement) {
   const l = document.createElement('label');
   const s = document.createElement('span');

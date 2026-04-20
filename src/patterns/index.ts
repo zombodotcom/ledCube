@@ -18,6 +18,8 @@ import { golSimple } from './golSimple';
 import { waveform3d } from './waveform3d';
 import { vuMeter } from './vuMeter';
 import { frequencyRings } from './frequencyRings';
+import { cubeSpectrogram } from './cubeSpectrogram';
+import { pianoRoll } from './pianoRoll';
 
 export interface PatternEntry {
   name: string;
@@ -37,39 +39,58 @@ return function(i, x, y, z, t, audio, out) {
   out[1] = audio.tint1[1] * k;
   out[2] = audio.tint1[2] * k;
 };`,
-  gradient: `// Vertical gradient tint1 → tint2, scrolling with speed
+  gradient: `// Vertical gradient through the full palette, scrolling with speed
+function palLerp(p, u, out) {
+  const S = p.length / 3; u = u < 0 ? 0 : u > 0.9999 ? 0.9999 : u;
+  const idx = u * (S - 1), i0 = Math.floor(idx), f = idx - i0, g = 1 - f;
+  const a = i0 * 3, b = (i0 + 1) * 3;
+  out[0] = p[a]*g + p[b]*f; out[1] = p[a+1]*g + p[b+1]*f; out[2] = p[a+2]*g + p[b+2]*f;
+}
+const tmp = [0,0,0];
 return function(i, x, y, z, t, audio, out) {
   const shift = t * audio.speed * 0.3;
   const raw = (z / 5) * audio.scale + shift;
   const u = raw - Math.floor(raw);
   const k = 0.6 + 0.4 * (audio.energy || 0.3);
-  out[0] = (audio.tint1[0] * (1 - u) + audio.tint2[0] * u) * k;
-  out[1] = (audio.tint1[1] * (1 - u) + audio.tint2[1] * u) * k;
-  out[2] = (audio.tint1[2] * (1 - u) + audio.tint2[2] * u) * k;
+  palLerp(audio.paletteStops, u, tmp);
+  out[0] = tmp[0]*k; out[1] = tmp[1]*k; out[2] = tmp[2]*k;
 };`,
-  stripes: `// Scrolling tint1/tint2 stripes; scale controls width
+  stripes: `// Scrolling palette stripes; each stripe picks a different palette u
+function palLerp(p, u, out) {
+  const S = p.length / 3; u = u < 0 ? 0 : u > 0.9999 ? 0.9999 : u;
+  const idx = u * (S - 1), i0 = Math.floor(idx), f = idx - i0, g = 1 - f;
+  const a = i0 * 3, b = (i0 + 1) * 3;
+  out[0] = p[a]*g + p[b]*f; out[1] = p[a+1]*g + p[b+1]*f; out[2] = p[a+2]*g + p[b+2]*f;
+}
+const tmp = [0,0,0];
 return function(i, x, y, z, t, audio, out) {
   const period = 0.6 / Math.max(0.1, audio.scale);
   const phase = (z - t * audio.speed * 1.5) / period;
   const w = phase - Math.floor(phase);
-  const use1 = w < 0.5;
+  const stripeIdx = Math.floor(phase);
+  const u = ((stripeIdx * 0.37) % 1 + 1) % 1;
   const edge = Math.min(w, 1 - w) * 2;
   const soft = Math.min(1, edge * 6);
-  const k = 0.8 + 0.2 * (audio.bass || 0);
-  out[0] = (use1 ? audio.tint1[0] : audio.tint2[0]) * soft * k;
-  out[1] = (use1 ? audio.tint1[1] : audio.tint2[1]) * soft * k;
-  out[2] = (use1 ? audio.tint1[2] : audio.tint2[2]) * soft * k;
+  const k = (0.8 + 0.2 * (audio.bass || 0)) * soft;
+  palLerp(audio.paletteStops, u, tmp);
+  out[0] = tmp[0]*k; out[1] = tmp[1]*k; out[2] = tmp[2]*k;
 };`,
-  pulseTint: `// Radial wave from center; bass fades tint1 → tint2
+  pulseTint: `// Radial wave; palette u driven by bass
+function palLerp(p, u, out) {
+  const S = p.length / 3; u = u < 0 ? 0 : u > 0.9999 ? 0.9999 : u;
+  const idx = u * (S - 1), i0 = Math.floor(idx), f = idx - i0, g = 1 - f;
+  const a = i0 * 3, b = (i0 + 1) * 3;
+  out[0] = p[a]*g + p[b]*f; out[1] = p[a+1]*g + p[b+1]*f; out[2] = p[a+2]*g + p[b+2]*f;
+}
+const tmp = [0,0,0];
 return function(i, x, y, z, t, audio, out) {
   const cz = 2.5;
   const d = Math.sqrt(x*x + y*y + (z-cz)*(z-cz)) * audio.scale;
   const wave = Math.sin(d * 1.4 - t * audio.speed * 3 + (audio.bass||0) * 6);
   const I = Math.max(0, wave) * (0.25 + 0.75 * (audio.bass || 0.1));
-  const w = Math.min(1, (audio.bass || 0) * 2);
-  out[0] = (audio.tint1[0]*(1-w) + audio.tint2[0]*w) * I;
-  out[1] = (audio.tint1[1]*(1-w) + audio.tint2[1]*w) * I;
-  out[2] = (audio.tint1[2]*(1-w) + audio.tint2[2]*w) * I;
+  const u = Math.min(1, (audio.bass || 0) * 2);
+  palLerp(audio.paletteStops, u, tmp);
+  out[0] = tmp[0]*I; out[1] = tmp[1]*I; out[2] = tmp[2]*I;
 };`,
   sineWave: `// Traveling sine band at tint1 — no audio needed
 return function(i, x, y, z, t, audio, out) {
@@ -81,17 +102,23 @@ return function(i, x, y, z, t, audio, out) {
   out[1] = audio.tint1[1] * lit;
   out[2] = audio.tint1[2] * lit;
 };`,
-  spectrum: `// Spectrum columns — x picks FFT band, z is magnitude (uses tint1/tint2 as lo/hi color)
+  spectrum: `// Spectrum columns — x picks FFT band, z is magnitude; colored via palette
+function palLerp(p, u, out) {
+  const S = p.length / 3; u = u < 0 ? 0 : u > 0.9999 ? 0.9999 : u;
+  const idx = u * (S - 1), i0 = Math.floor(idx), f = idx - i0, g = 1 - f;
+  const a = i0 * 3, b = (i0 + 1) * 3;
+  out[0] = p[a]*g + p[b]*f; out[1] = p[a+1]*g + p[b+1]*f; out[2] = p[a+2]*g + p[b+2]*f;
+}
+const tmp = [0,0,0];
 return function(i, x, y, z, t, audio, out) {
   const band = Math.floor(((x + 4) / 8) * audio.fft.length);
   const b = Math.max(0, Math.min(audio.fft.length - 1, band));
   const mag = audio.fft[b];
   const hFrac = Math.max(0, Math.min(1, z / 5));
-  const lit = hFrac < mag ? 1 : 0;
+  if (hFrac >= mag) return;
   const u = b / audio.fft.length;
-  out[0] = lit * (audio.tint1[0]*(1-u) + audio.tint2[0]*u);
-  out[1] = lit * (audio.tint1[1]*(1-u) + audio.tint2[1]*u);
-  out[2] = lit * (audio.tint1[2]*(1-u) + audio.tint2[2]*u);
+  palLerp(audio.paletteStops, u, tmp);
+  out[0] = tmp[0]; out[1] = tmp[1]; out[2] = tmp[2];
 };`,
   bassPulse: `// Radial wave driven by bass
 return function(i, x, y, z, t, audio, out) {
@@ -142,7 +169,14 @@ return function(i, x, y, z, t, audio, out) {
   out[1] = (audio.tint1[1]*(1-u) + audio.tint2[1]*u) * k;
   out[2] = (audio.tint1[2]*(1-u) + audio.tint2[2]*u) * k;
 };`,
-  plasma: `// Demoscene plasma — sum of sines across 3D, lerps tint1↔tint2
+  plasma: `// Demoscene plasma — sum of sines across 3D, mapped through palette
+function palLerp(p, u, out) {
+  const S = p.length / 3; u = u < 0 ? 0 : u > 0.9999 ? 0.9999 : u;
+  const idx = u * (S - 1), i0 = Math.floor(idx), f = idx - i0, g = 1 - f;
+  const a = i0 * 3, b = (i0 + 1) * 3;
+  out[0] = p[a]*g + p[b]*f; out[1] = p[a+1]*g + p[b+1]*f; out[2] = p[a+2]*g + p[b+2]*f;
+}
+const tmp = [0,0,0];
 return function(i, x, y, z, t, audio, out) {
   const s = audio.scale;
   const T = t * audio.speed * 0.8;
@@ -153,20 +187,25 @@ return function(i, x, y, z, t, audio, out) {
   const v = (a+b+c+d) * 0.25;
   const u = 0.5 + 0.5 * v;
   const k = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(v * 3.14));
-  out[0] = (audio.tint1[0]*(1-u) + audio.tint2[0]*u) * k;
-  out[1] = (audio.tint1[1]*(1-u) + audio.tint2[1]*u) * k;
-  out[2] = (audio.tint1[2]*(1-u) + audio.tint2[2]*u) * k;
+  palLerp(audio.paletteStops, u, tmp);
+  out[0] = tmp[0]*k; out[1] = tmp[1]*k; out[2] = tmp[2]*k;
 };`,
-  aurora: `// Aurora curtain — vertical gradient with horizontal noise drift
+  aurora: `// Aurora curtain — vertical gradient through palette, with horizontal noise drift
+function palLerp(p, u, out) {
+  const S = p.length / 3; u = u < 0 ? 0 : u > 0.9999 ? 0.9999 : u;
+  const idx = u * (S - 1), i0 = Math.floor(idx), f = idx - i0, g = 1 - f;
+  const a = i0 * 3, b = (i0 + 1) * 3;
+  out[0] = p[a]*g + p[b]*f; out[1] = p[a+1]*g + p[b+1]*f; out[2] = p[a+2]*g + p[b+2]*f;
+}
+const tmp = [0,0,0];
 return function(i, x, y, z, t, audio, out) {
   const T = t * audio.speed * 0.4;
   const drift = Math.sin(x*0.6*audio.scale + T)*0.5 + Math.sin(y*0.4*audio.scale - T*0.7)*0.5;
   const zNorm = z / 5;
   const u = Math.max(0, Math.min(1, zNorm*0.7 + 0.15 + drift*0.25));
   const veil = 0.35 + 0.65 * Math.max(0, Math.sin(zNorm*3.14 + drift*1.5 + T*0.6));
-  out[0] = (audio.tint1[0]*(1-u) + audio.tint2[0]*u) * veil;
-  out[1] = (audio.tint1[1]*(1-u) + audio.tint2[1]*u) * veil;
-  out[2] = (audio.tint1[2]*(1-u) + audio.tint2[2]*u) * veil;
+  palLerp(audio.paletteStops, u, tmp);
+  out[0] = tmp[0]*veil; out[1] = tmp[1]*veil; out[2] = tmp[2]*veil;
 };`,
   embers: `// Warm ember field — bottom-glowing, flickering upward (uses tint1)
 return function(i, x, y, z, t, audio, out) {
@@ -206,6 +245,97 @@ return function(i, x, y, z, t, audio, out) {
   out[0] = audio.tint1[0]*I;
   out[1] = audio.tint1[1]*I;
   out[2] = audio.tint1[2]*I;
+};`,
+  pianoRoll: `// Synthesia-style piano roll. X = MIDI note (C2..C7), Z column lights
+// while a note is held. Recently-played notes leave a short trail at the bottom.
+function palLerp(p, u, out) {
+  const S = p.length / 3; u = u < 0 ? 0 : u > 0.9999 ? 0.9999 : u;
+  const idx = u * (S - 1), i0 = Math.floor(idx), f = idx - i0, g = 1 - f;
+  const a = i0 * 3, b = (i0 + 1) * 3;
+  out[0] = p[a]*g + p[b]*f; out[1] = p[a+1]*g + p[b+1]*f; out[2] = p[a+2]*g + p[b+2]*f;
+}
+const tmp = [0,0,0];
+const LOW = 36, HIGH = 96, RANGE = HIGH - LOW;
+return function(i, x, y, z, t, audio, out, ctx) {
+  let st = ctx ? ctx.state.piano : undefined;
+  if (ctx && !st) { st = { trail: new Float32Array(128) }; ctx.state.piano = st; }
+  if (st && i === 0) {
+    for (let n = 0; n < 128; n++) if (audio.midiNotes[n]) st.trail[n] = t;
+  }
+  const xNorm = Math.max(0, Math.min(1, (x + 4) / 8));
+  const noteIdx = LOW + Math.floor(xNorm * RANGE);
+  if (noteIdx < 0 || noteIdx >= 128) return;
+  const zNorm = z / 5;
+  if (audio.midiNotes[noteIdx] === 1) {
+    const u = (noteIdx - LOW) / Math.max(1, RANGE);
+    palLerp(audio.paletteStops, u, tmp);
+    const k = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(t * 10 + noteIdx));
+    out[0] = tmp[0]*k; out[1] = tmp[1]*k; out[2] = tmp[2]*k;
+    return;
+  }
+  const lastPlay = st ? st.trail[noteIdx] : 0;
+  if (lastPlay > 0) {
+    const age = t - lastPlay;
+    if (age < 1.0 && zNorm < 0.6) {
+      const fade = (1 - age / 1.0) * (1 - zNorm / 0.6);
+      const u = (noteIdx - LOW) / Math.max(1, RANGE);
+      palLerp(audio.paletteStops, u, tmp);
+      const k = fade * 0.5;
+      out[0] = tmp[0]*k; out[1] = tmp[1]*k; out[2] = tmp[2]*k;
+      return;
+    }
+  }
+  if (zNorm < 0.12) {
+    const isC = noteIdx % 12 === 0;
+    const u = (noteIdx - LOW) / Math.max(1, RANGE);
+    palLerp(audio.paletteStops, u, tmp);
+    const k = isC ? 0.18 : 0.08;
+    out[0] = tmp[0]*k; out[1] = tmp[1]*k; out[2] = tmp[2]*k;
+  }
+};`,
+  cubeSpectrogram: `// Scrolling 3D spectrogram. X=time (newest right), Y=freq band, Z=magnitude.
+// Uses ctx.state to ring-buffer FFT snapshots at ~30 Hz.
+function heatmap(v, out) {
+  v = Math.max(0, Math.min(1, v));
+  if (v < 0.25) { const u=v/0.25; out[0]=0; out[1]=0; out[2]=u*0.7; }
+  else if (v < 0.5) { const u=(v-0.25)/0.25; out[0]=0; out[1]=u*0.9; out[2]=0.7+u*0.3; }
+  else if (v < 0.75) { const u=(v-0.5)/0.25; out[0]=u; out[1]=0.9; out[2]=1-u; }
+  else { const u=(v-0.75)/0.25; out[0]=1; out[1]=0.9-u*0.7; out[2]=0; }
+}
+return function(i, x, y, z, t, audio, out, ctx) {
+  if (!ctx) { out[0]=audio.tint1[0]*0.05; out[1]=audio.tint1[1]*0.05; out[2]=audio.tint1[2]*0.05; return; }
+  let st = ctx.state.spec;
+  if (!st) {
+    st = { cols: 24, rows: Math.min(audio.fft.length, 24), history: null, head: 0, lastPush: audio.time };
+    st.history = new Float32Array(st.cols * st.rows);
+    ctx.state.spec = st;
+  }
+  const tickInterval = 0.033 / Math.max(0.2, audio.speed);
+  if (i === 0 && audio.time - st.lastPush >= tickInterval) {
+    const bandsPerRow = audio.fft.length / st.rows;
+    const base = st.head * st.rows;
+    for (let r = 0; r < st.rows; r++) {
+      const lo = Math.floor(r * bandsPerRow);
+      const hi = Math.max(lo + 1, Math.floor((r + 1) * bandsPerRow));
+      let sum = 0, count = 0;
+      for (let b = lo; b < hi; b++) { sum += audio.fft[b]; count++; }
+      st.history[base + r] = count ? sum / count : 0;
+    }
+    st.head = (st.head + 1) % st.cols;
+    st.lastPush = audio.time;
+  }
+  const xNorm = Math.max(0, Math.min(1, (x + 4) / 8));
+  const yNorm = Math.max(0, Math.min(1, (y + 4) / 8));
+  const zNorm = Math.max(0, Math.min(1, z / 5));
+  const colOffset = Math.floor(xNorm * st.cols);
+  const col = (st.head + colOffset) % st.cols;
+  const row = Math.min(st.rows - 1, Math.floor(yNorm * st.rows));
+  const mag = st.history[col * st.rows + row];
+  if (zNorm > mag) return;
+  const relHeight = zNorm / Math.max(0.05, mag);
+  heatmap(relHeight*0.9 + mag*0.1, out);
+  const k = 0.6 + 0.4 * mag;
+  out[0] *= k; out[1] *= k; out[2] *= k;
 };`,
   waveform3d: `// Audio waveform as a 3D band across X
 return function(i, x, y, z, t, audio, out) {
@@ -483,6 +613,8 @@ export const builtinPatterns: Record<string, PatternEntry> = {
   sineWave:    { name: 'Sine wave',              category: 'generative', description: 'Traveling sine-band — no audio needed.',                fn: sineWave,    source: SOURCES.sineWave },
 
   // ─── Audio-reactive ───
+  pianoRoll:   { name: 'Piano roll (MIDI)',      category: 'audio',      description: 'Synthesia-style piano roll — needs a MIDI file loaded.',    fn: pianoRoll,   source: SOURCES.pianoRoll },
+  cubeSpectrogram: { name: 'Cube spectrogram',   category: 'audio',      description: 'Scrolling FFT history painted on the cube — X=time, Y=freq, Z=magnitude.', fn: cubeSpectrogram, source: SOURCES.cubeSpectrogram },
   waveform3d:  { name: 'Waveform 3D',            category: 'audio',      description: 'Oscilloscope-style audio waveform across the cube.',    fn: waveform3d,  source: SOURCES.waveform3d },
   vuMeter:     { name: 'VU meter',               category: 'audio',      description: 'Bottom-to-top bars — left=bass, mid=mid, right=treble.', fn: vuMeter,    source: SOURCES.vuMeter },
   frequencyRings: { name: 'Frequency rings',     category: 'audio',      description: 'Concentric rings from center; radius picks FFT band.',  fn: frequencyRings, source: SOURCES.frequencyRings },
