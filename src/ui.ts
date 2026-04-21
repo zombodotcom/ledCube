@@ -16,7 +16,6 @@ export interface UICallbacks {
   onAudioMic(): void;
   onAudioTabCapture(): void;
   onYouTubeUrl(url: string): void;
-  onYouTubeAnalyze(url: string): void;
   onAudioSynth(opts: { kind: SynthKind; freq: number; monitor: number; scale: ScaleName }): void;
   onSynthFreq(freq: number): void;
   onSynthMonitor(g: number): void;
@@ -377,35 +376,26 @@ export function buildUI(
   cur.appendChild(row('Mic gain', micGain));
   micGain.addEventListener('input', () => cb.onMicGain(+micGain.value));
 
-  // YouTube URL — two modes: inline iframe (watch only), or new tab + analyze
+  // YouTube URL — inline player only. Browser CORS blocks reading audio from
+  // cross-origin iframes, so "analysis" requires tab capture (see mic section)
+  // or downloading the audio as an MP3 and using the Audio file input above.
   const ytInput = document.createElement('input');
   ytInput.type = 'text';
-  ytInput.placeholder = 'YouTube URL…';
+  ytInput.placeholder = 'YouTube URL (watch inline)';
   ytInput.style.cssText = 'width: 100%;';
   cur.appendChild(row('YouTube', ytInput));
-  const ytBtnRow = document.createElement('div');
-  ytBtnRow.className = 'row';
-  const ytInline = button('Watch here');
-  ytInline.title = 'Opens in a floating player inside this tab (no audio analysis)';
-  const ytAnalyze = button('Open + analyze', 'primary');
-  ytAnalyze.title = 'Opens YouTube in a new tab and prompts to share that tab (with audio) for analysis';
-  ytBtnRow.appendChild(ytInline);
-  ytBtnRow.appendChild(ytAnalyze);
-  cur.appendChild(ytBtnRow);
+  const ytPlay = button('Play in player');
+  cur.appendChild(ytPlay);
   const ytHint = document.createElement('div');
   ytHint.style.cssText = 'font-size: 10px; color: var(--muted); margin: 4px 2px 6px; line-height: 1.4;';
-  ytHint.innerHTML = '<b>Open + analyze</b> opens YouTube in a new tab, then asks you to share it. <b>Tick "Share tab audio"</b> at the bottom of the dialog or no audio will be captured.';
+  ytHint.innerHTML = 'YouTube plays in a floating player — <i>no audio analysis</i> (browsers block cross-origin audio). For visualizations: download the audio as MP3 and use Audio file above, or use Capture tab audio.';
   cur.appendChild(ytHint);
-  ytInline.addEventListener('click', () => {
+  ytPlay.addEventListener('click', () => {
     const v = ytInput.value.trim();
     if (v) cb.onYouTubeUrl(v);
   });
-  ytAnalyze.addEventListener('click', () => {
-    const v = ytInput.value.trim();
-    if (v) cb.onYouTubeAnalyze(v);
-  });
   ytInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && ytInput.value.trim()) cb.onYouTubeAnalyze(ytInput.value.trim());
+    if (e.key === 'Enter' && ytInput.value.trim()) cb.onYouTubeUrl(ytInput.value.trim());
   });
   const beatSens = rangeEl(1.4, 1.05, 2.5, 0.05);
   cur.appendChild(row('Beat sensitivity', beatSens));

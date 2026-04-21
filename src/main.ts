@@ -143,35 +143,6 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
     }
   },
   onYouTubeUrl(url) { openYouTubePlayer(url); },
-  async onYouTubeAnalyze(url) {
-    const id = extractYouTubeId(url);
-    if (!id) {
-      alert('Could not parse a YouTube video ID from that URL');
-      return;
-    }
-    const win = window.open(`https://www.youtube.com/watch?v=${id}`, '_blank');
-    if (!win) {
-      alert('Popup blocked — allow popups for this site, or use Watch here instead.');
-      return;
-    }
-    // Give the user a moment to land on the new tab and press play before the
-    // share dialog pops up (helps, and the YouTube tab needs to be reachable).
-    await new Promise((r) => setTimeout(r, 1500));
-    try {
-      await audio.useTabAudio();
-      scope.setVisible(true);
-    } catch (e) {
-      const msg = (e as Error).message || 'failed';
-      alert(
-        `Tab capture failed: ${msg}\n\n` +
-        `In the share dialog:\n` +
-        `  1. Pick "Chrome Tab" (not Window/Screen)\n` +
-        `  2. Select the YouTube tab\n` +
-        `  3. Tick "Share tab audio" at the bottom\n` +
-        `  4. Click Share`
-      );
-    }
-  },
   async onAudioSynth(opts) {
     try {
       await audio.useSynth(opts);
