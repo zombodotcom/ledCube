@@ -259,7 +259,8 @@ return function(i, x, y, z, t, audio, out) {
   out[1] = audio.tint1[1]*I*(0.4 + 0.6*fall);
   out[2] = audio.tint1[2]*I*0.3;
 };`,
-  fireflies: `// 32 drifting fireflies; each firefly has its own stable palette color
+  fireflies: `// 32 drifting fireflies with per-firefly palette color; position and
+// color are cached once per frame (at i=0), inner pixel loop is pure math.
 function palLerp(p, u, out) {
   const S = p.length / 3; u = u < 0 ? 0 : u > 0.9999 ? 0.9999 : u;
   const idx = u * (S - 1), i0 = Math.floor(idx), f = idx - i0, g = 1 - f;
@@ -270,6 +271,9 @@ const tmp = [0,0,0];
 const N = 32;
 const fx = new Float32Array(N), fy = new Float32Array(N), fz = new Float32Array(N);
 const fphase = new Float32Array(N), ffreq = new Float32Array(N), fhue = new Float32Array(N);
+const cacheX = new Float32Array(N), cacheY = new Float32Array(N), cacheZ = new Float32Array(N);
+const cacheR = new Float32Array(N), cacheG = new Float32Array(N), cacheB = new Float32Array(N);
+let cachedT = -1;
 for (let k = 0; k < N; k++) {
   fx[k] = Math.sin(k*12.9898)*4;
   fy[k] = Math.cos(k*78.233)*4;
@@ -279,19 +283,25 @@ for (let k = 0; k < N; k++) {
   fhue[k] = ((k * 2654435761) >>> 0) / 0xffffffff;
 }
 return function(i, x, y, z, t, audio, out) {
-  const T = t * audio.speed;
+  if (i === 0 || cachedT !== t) {
+    const T = t * audio.speed;
+    for (let k = 0; k < N; k++) {
+      cacheX[k] = fx[k] + Math.sin(T*0.31 + k)*0.6;
+      cacheY[k] = fy[k] + Math.cos(T*0.27 + k*1.7)*0.6;
+      cacheZ[k] = fz[k] + Math.sin(T*0.18 + k*0.9)*0.4;
+      const blink = 0.55 + 0.45*Math.sin(T*ffreq[k] + fphase[k]);
+      palLerp(audio.paletteStops, fhue[k], tmp);
+      cacheR[k] = tmp[0]*blink; cacheG[k] = tmp[1]*blink; cacheB[k] = tmp[2]*blink;
+    }
+    cachedT = t;
+  }
   let r = 0, g = 0, b = 0, totalW = 0;
   for (let k = 0; k < N; k++) {
-    const px = fx[k] + Math.sin(T*0.31 + k)*0.6;
-    const py = fy[k] + Math.cos(T*0.27 + k*1.7)*0.6;
-    const pz = fz[k] + Math.sin(T*0.18 + k*0.9)*0.4;
-    const dx = x-px, dy = y-py, dz = z-pz;
+    const dx = x-cacheX[k], dy = y-cacheY[k], dz = z-cacheZ[k];
     const d2 = dx*dx + dy*dy + dz*dz;
-    const blink = 0.55 + 0.45*Math.sin(T*ffreq[k] + fphase[k]);
-    const w = blink / (1 + d2*4);
+    const w = 1 / (1 + d2*4);
     if (w < 0.005) continue;
-    palLerp(audio.paletteStops, fhue[k], tmp);
-    r += tmp[0]*w; g += tmp[1]*w; b += tmp[2]*w;
+    r += cacheR[k]*w; g += cacheG[k]*w; b += cacheB[k]*w;
     totalW += w;
   }
   if (totalW < 0.01) return;
