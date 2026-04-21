@@ -16,6 +16,7 @@ export interface UICallbacks {
   onAudioMic(): void;
   onAudioTabCapture(): void;
   onYouTubeUrl(url: string): void;
+  onYouTubeAnalyze(url: string): void;
   onAudioSynth(opts: { kind: SynthKind; freq: number; monitor: number; scale: ScaleName }): void;
   onSynthFreq(freq: number): void;
   onSynthMonitor(g: number): void;
@@ -376,26 +377,35 @@ export function buildUI(
   cur.appendChild(row('Mic gain', micGain));
   micGain.addEventListener('input', () => cb.onMicGain(+micGain.value));
 
-  // YouTube URL → opens iframe (audio routed via tab capture)
+  // YouTube URL — two modes: inline iframe (watch only), or new tab + analyze
   const ytInput = document.createElement('input');
   ytInput.type = 'text';
   ytInput.placeholder = 'YouTube URL…';
-  ytInput.style.cssText = 'flex: 1;';
-  const ytBtn = button('Open');
-  const ytRow = document.createElement('div');
-  ytRow.className = 'row';
-  ytRow.appendChild(ytInput);
-  ytRow.appendChild(ytBtn);
-  cur.appendChild(ytRow);
+  ytInput.style.cssText = 'width: 100%;';
+  cur.appendChild(row('YouTube', ytInput));
+  const ytBtnRow = document.createElement('div');
+  ytBtnRow.className = 'row';
+  const ytInline = button('Watch here');
+  ytInline.title = 'Opens in a floating player inside this tab (no audio analysis)';
+  const ytAnalyze = button('Open + analyze', 'primary');
+  ytAnalyze.title = 'Opens YouTube in a new tab and prompts to share that tab (with audio) for analysis';
+  ytBtnRow.appendChild(ytInline);
+  ytBtnRow.appendChild(ytAnalyze);
+  cur.appendChild(ytBtnRow);
   const ytHint = document.createElement('div');
-  ytHint.style.cssText = 'font-size: 10px; color: var(--muted); margin: 2px 2px 6px; line-height: 1.4;';
-  ytHint.textContent = 'Opens in a floating player. Click Capture tab audio + share that tab to analyze it.';
+  ytHint.style.cssText = 'font-size: 10px; color: var(--muted); margin: 4px 2px 6px; line-height: 1.4;';
+  ytHint.innerHTML = '<b>Open + analyze</b> opens YouTube in a new tab, then asks you to share it. <b>Tick "Share tab audio"</b> at the bottom of the dialog or no audio will be captured.';
   cur.appendChild(ytHint);
-  ytBtn.addEventListener('click', () => {
-    if (ytInput.value.trim()) cb.onYouTubeUrl(ytInput.value.trim());
+  ytInline.addEventListener('click', () => {
+    const v = ytInput.value.trim();
+    if (v) cb.onYouTubeUrl(v);
+  });
+  ytAnalyze.addEventListener('click', () => {
+    const v = ytInput.value.trim();
+    if (v) cb.onYouTubeAnalyze(v);
   });
   ytInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && ytInput.value.trim()) cb.onYouTubeUrl(ytInput.value.trim());
+    if (e.key === 'Enter' && ytInput.value.trim()) cb.onYouTubeAnalyze(ytInput.value.trim());
   });
   const beatSens = rangeEl(1.4, 1.05, 2.5, 0.05);
   cur.appendChild(row('Beat sensitivity', beatSens));
