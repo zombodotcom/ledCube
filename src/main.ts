@@ -143,6 +143,19 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
     }
   },
   onYouTubeUrl(url) { openYouTubePlayer(url); },
+  async onYouTubeFetch(url) {
+    try {
+      const file = await fetchYouTubeAudio(url);
+      await audio.loadFile(file);
+      scope.setVisible(true);
+    } catch (e) {
+      alert(
+        `YouTube audio fetch failed: ${(e as Error).message}\n\n` +
+        `Falling back: try downloading the MP3 yourself (e.g. via cobalt.tools), ` +
+        `then drop it on Audio file. Or use Capture tab audio.`,
+      );
+    }
+  },
   async onAudioSynth(opts) {
     try {
       await audio.useSynth(opts);
@@ -190,6 +203,51 @@ const ui = buildUI(uiRoot, layout, builtinPatterns, activePatternKey, electrical
     downloadText('power-report.md', exportPowerReport(map, electrical, r), 'text/markdown');
   },
 });
+
+// Fetch YouTube → MP3 via the cobalt.tools API (or a community mirror).
+// 3rd-party service; may rate-limit, error, or change protocol. Best effort.
+async function fetchYouTubeAudio(url: string): Promise<File> {
+  const instances = [
+    'https://api.cobalt.tools/',
+    'https://capi.oak.li/',
+    'https://co.eepy.today/',
+  ];
+  let lastErr: Error | null = null;
+  for (const inst of instances) {
+    try {
+      const res = await fetch(inst, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url,
+          downloadMode: 'audio',
+          audioFormat: 'mp3',
+          filenameStyle: 'basic',
+        }),
+      });
+      if (!res.ok) {
+        lastErr = new Error(`${inst} HTTP ${res.status}`);
+        continue;
+      }
+      const data = await res.json();
+      const audioUrl: string | undefined = data.url ?? data.tunnel;
+      if (!audioUrl) {
+        lastErr = new Error(`${inst} returned status ${data.status ?? 'unknown'}: ${data.text ?? ''}`);
+        continue;
+      }
+      const audioRes = await fetch(audioUrl);
+      if (!audioRes.ok) {
+        lastErr = new Error(`audio fetch HTTP ${audioRes.status}`);
+        continue;
+      }
+      const blob = await audioRes.blob();
+      return new File([blob], (data.filename ?? 'youtube-audio.mp3'), { type: blob.type || 'audio/mpeg' });
+    } catch (e) {
+      lastErr = e as Error;
+    }
+  }
+  throw lastErr ?? new Error('All cobalt instances failed');
+}
 
 function extractYouTubeId(url: string): string | null {
   const patterns = [

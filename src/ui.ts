@@ -16,6 +16,7 @@ export interface UICallbacks {
   onAudioMic(): void;
   onAudioTabCapture(): void;
   onYouTubeUrl(url: string): void;
+  onYouTubeFetch(url: string): void;
   onAudioSynth(opts: { kind: SynthKind; freq: number; monitor: number; scale: ScaleName }): void;
   onSynthFreq(freq: number): void;
   onSynthMonitor(g: number): void;
@@ -384,18 +385,29 @@ export function buildUI(
   ytInput.placeholder = 'YouTube URL (watch inline)';
   ytInput.style.cssText = 'width: 100%;';
   cur.appendChild(row('YouTube', ytInput));
-  const ytPlay = button('Play in player');
-  cur.appendChild(ytPlay);
+  const ytBtnRow = document.createElement('div');
+  ytBtnRow.className = 'row';
+  const ytFetch = button('Fetch + analyze', 'primary');
+  ytFetch.title = 'Downloads audio via cobalt.tools (3rd-party) and feeds it to Web Audio so patterns react. May fail if rate-limited.';
+  const ytPlay = button('Watch only');
+  ytPlay.title = 'Inline player — video plays but cannot drive patterns.';
+  ytBtnRow.appendChild(ytFetch);
+  ytBtnRow.appendChild(ytPlay);
+  cur.appendChild(ytBtnRow);
   const ytHint = document.createElement('div');
   ytHint.style.cssText = 'font-size: 10px; color: var(--muted); margin: 4px 2px 6px; line-height: 1.4;';
-  ytHint.innerHTML = 'YouTube plays in a floating player — <i>no audio analysis</i> (browsers block cross-origin audio). For visualizations: download the audio as MP3 and use Audio file above, or use Capture tab audio.';
+  ytHint.innerHTML = '<b>Fetch + analyze</b> uses cobalt.tools to grab the audio so patterns can react to it. May take a few seconds; falls back to instructions if the service is down.';
   cur.appendChild(ytHint);
+  ytFetch.addEventListener('click', () => {
+    const v = ytInput.value.trim();
+    if (v) cb.onYouTubeFetch(v);
+  });
   ytPlay.addEventListener('click', () => {
     const v = ytInput.value.trim();
     if (v) cb.onYouTubeUrl(v);
   });
   ytInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && ytInput.value.trim()) cb.onYouTubeUrl(ytInput.value.trim());
+    if (e.key === 'Enter' && ytInput.value.trim()) cb.onYouTubeFetch(ytInput.value.trim());
   });
   const beatSens = rangeEl(1.4, 1.05, 2.5, 0.05);
   cur.appendChild(row('Beat sensitivity', beatSens));
